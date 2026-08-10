@@ -1,0 +1,1189 @@
+---
+title: "Compare Profiles"
+author: "Seema Plaisier"
+date: "`r format(Sys.time(), '%m/%d/%y')`"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r ReportingOptions, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(width = 60) # Limits output to 60 characters
+```
+
+# Load packages
+
+Install the necessary packages for our analysis.  The function 'require' returns a true value if it is already installed, so if it is not, we need to install before loading
+
+```{r Packages, warning=FALSE}
+
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(ggrepel)
+library(fgsea)
+library(reshape2)
+library(msigdbr)
+library(stringr)
+
+library(igraph)
+library(ggraph)
+library(tidygraph)
+library(pheatmap)
+
+library(clusterProfiler)
+library(enrichplot)
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+
+library(UpSetR)
+
+library(corrplot)
+
+library(BiocParallel)
+
+library(e1071) # For skewness calculation
+```
+
+# Set working directory
+
+Your working directory is where all your output files are going to be saved.
+
+``` {r WorkingDirectory, tidy=TRUE, tidy.opts=list(width.cutoff=60)}
+# you will need to change this to the directory you are working in
+# make sure to include the / at the end of the directory path
+
+input_directory = "C:/Users/plaisiersb/OneDrive - National Institutes of Health/Documents/Projects/Placenta/HG38/Correct_BatchCovariate/"
+
+male_normhyp_data = read.csv(paste0(input_directory,"dream_diffexpr_male_hypnorm_batchcorr.csv"), check.names = FALSE)
+female_normhyp_data = read.csv(paste0(input_directory,"dream_diffexpr_female_hypnorm_batchcorr.csv"), check.names = FALSE)
+# correct sign to reflect hyp:norm
+male_normhyp_data$logFC = -1 * male_normhyp_data$logFC
+male_normhyp_data$t = -1 * male_normhyp_data$t
+male_normhyp_data$z.std = -1 * male_normhyp_data$z.std
+female_normhyp_data$logFC = -1 * female_normhyp_data$logFC
+female_normhyp_data$t = -1 * female_normhyp_data$t
+female_normhyp_data$z.std = -1 * female_normhyp_data$z.std
+
+norm_femalemale_data = read.csv(paste0(input_directory,"dream_diffexpr_norm_femalemale_batchcorr.csv"), check.names = FALSE)
+hyp_femalemale_data = read.csv(paste0(input_directory,"dream_diffexpr_hyp_femalemale_batchcorr.csv"), check.names = FALSE)
+
+
+```
+
+# compare male to female in norm vs hyp
+
+```{r}
+
+# ------- hyp diff in male vs female -------
+
+merged_data = merge(male_normhyp_data, female_normhyp_data, by = "genes")
+merged_data = merged_data %>%
+  mutate(
+    sig = case_when(
+      adj.P.Val.x < 0.05 & adj.P.Val.y < 0.05 ~ "both_sig",
+      P.Value.x < 0.05 & P.Value.y < 0.05 ~ "both_nom_sig",
+      adj.P.Val.x < 0.05 & adj.P.Val.y >= 0.05 ~ "sig_male",
+      P.Value.x < 0.05 & P.Value.y >= 0.05 ~ "nom_sig_male",
+      adj.P.Val.x >= 0.05 & adj.P.Val.y < 0.05 ~ "sig_female",
+      P.Value.x >= 0.05 & P.Value.y < 0.05 ~ "nom_sig_female",
+      TRUE       ~ "not"
+    )
+  )
+merged_data_label = merged_data %>%
+  group_by(sig) %>%
+  slice_max(order_by = abs(logFC.x), n = 15, with_ties = FALSE) %>%
+  ungroup()
+
+ggplot(merged_data, aes(x = logFC.x, y = logFC.y, color = sig, alpha = sig)) +
+  geom_point() +
+  #scale_color_manual(values = c("both_sig" = "red", "sig_male" = "blue","sig_female" = "orange", "not" = "grey")) +
+  #scale_alpha_manual(values = c("both_sig" = 0.9, "sig_male" = 0.9,"sig_female" = 0.9, "not" = 0.3)) +
+  scale_color_manual(values = c("both_sig" = "red", "both_nom_sig" = "pink", "sig_male" = "blue", "nom_sig_male" = "lightblue", "sig_female" = "orange", "nom_sig_female" = "khaki1", "not" = "grey")) +
+  scale_alpha_manual(values = c("both_sig" = 0.9, "both_nom_sig" = 0.7, "sig_male" = 0.9, "nom_sig_male" = 0.7, "sig_female" = 0.9, "nom_sig_female" = 0.7, "not" = 0.3)) +
+  geom_text_repel(
+    data = merged_data_label,
+    aes(label = genes),
+    max.overlaps = Inf
+  ) +
+  theme_minimal()
+ggsave(paste0(input_directory, "scatter_malehyp_femalehyp.pdf"))
+
+
+# ------- sex diff in norm vs hyp -------
+
+merged_data = merge(norm_femalemale_data, hyp_femalemale_data, by = "genes")
+merged_data = merged_data %>%
+  mutate(
+    sig = case_when(
+      adj.P.Val.x < 0.05 & adj.P.Val.y < 0.05 ~ "both_sig",
+      P.Value.x < 0.05 & P.Value.y < 0.05 ~ "both_nom_sig",
+      adj.P.Val.x < 0.05 & adj.P.Val.y >= 0.05 ~ "sig_norm",
+      P.Value.x < 0.05 & P.Value.y >= 0.05 ~ "nom_sig_norm",
+      adj.P.Val.x >= 0.05 & adj.P.Val.y < 0.05 ~ "sig_hyp",
+      P.Value.x >= 0.05 & P.Value.y < 0.05 ~ "nom_sig_hyp",
+      TRUE       ~ "not"
+    )
+  )
+
+merged_data_label = merged_data %>%
+  group_by(sig) %>%
+  slice_max(order_by = abs(logFC.x), n = 10, with_ties = FALSE) %>%
+  ungroup()
+
+ggplot(merged_data, aes(x = logFC.x, y = logFC.y, color = sig, alpha = sig)) +
+  geom_point() +
+  #xlim(-5,5) +
+  #ylim(-5,5)  +
+  #scale_color_manual(values = c("both_sig" = "red", "sig_norm" = "green","sig_hyp" = "purple", "not" = "grey")) +
+  #scale_alpha_manual(values = c("both_sig" = 0.9, "sig_norm" = 0.9,"sig_hyp" = 0.9, "not" = 0.3)) +
+  scale_color_manual(values = c("both_sig" = "red", "both_nom_sig" = "pink", "sig_norm" = "forestgreen", "nom_sig_norm" = "lightgreen", "sig_hyp" = "purple", "nom_sig_hyp" = "lavender", "not" = "grey")) +
+  scale_alpha_manual(values = c("both_sig" = 0.9, "both_nom_sig" = 0.7, "sig_norm" = 0.9, "nom_sig_norm" = 0.7, "sig_hyp" = 0.9, "nom_sig_hyp" = 0.7, "not" = 0.3)) +
+  geom_text_repel(
+    data = merged_data_label,
+    aes(label = genes),
+    max.overlaps = Inf
+  ) +
+  theme_minimal()
+ggsave(paste0(input_directory, "scatter_sexdiff_norm_hyp.pdf"))
+
+```
+
+# GSEA 
+
+```{r gsea}
+
+datasets = list("norm_femalemale" = data.frame(norm_femalemale_data), "hyp_femalemale" = data.frame(hyp_femalemale_data), "male_normhyp" = data.frame(male_normhyp_data), "female_normhyp" = data.frame(female_normhyp_data))
+
+sig_pathways_list = list()
+
+for (name in names(datasets)) {
+
+  print (name)
+  
+  dataset = datasets[[name]]
+  
+  # Create ranked vector
+  # Common choice: moderated t-statistic
+  ranks = dataset$t
+  
+  # Names must be gene symbols (or whatever ID matches pathway genes)
+  names(ranks) = dataset$genes
+  
+  # Remove duplicates and NAs
+  ranks = ranks[!is.na(ranks)]
+  ranks = sort(ranks, decreasing = TRUE)
+  
+  # Get Hallmark pathways from MSigDB
+  #msig = msigdbr(species = "Homo sapiens",collection = "H")
+  #msig = msigdbr(species = "Homo sapiens", collection = "C5", subcollection = "GO:BP")
+  #msig = msigdbr(species = "Homo sapiens", collection = "C2", subcollection = "CP:KEGG_LEGACY")
+  msig = msigdbr(species = "Homo sapiens", collection = "C5", subcollection = "HPO")
+  
+  pathways = split(msig$gene_symbol, msig$gs_name)
+  
+  # Run fgsea
+  suppressWarnings({
+    fgseaRes = fgsea(
+      pathways = pathways,
+      stats = ranks,
+      minSize = 15,
+      maxSize = 500,
+      BPPARAM = SerialParam()
+    )
+  })
+  
+  # Sort by significance
+  fgseaRes = fgseaRes[order(fgseaRes$padj), ]
+  
+  # write out results
+  fgseaRes_out = as.data.frame(fgseaRes)
+  fgseaRes_out$leadingEdge = sapply(fgseaRes_out$leadingEdge, paste, collapse = ",")
+  #write.csv(fgseaRes_out, file = paste0(input_directory,"t_fgsea_H_results_", name, ".csv"))
+  #write.csv(fgseaRes_out, file = paste0(input_directory,"t_fgsea_GOBP_results_", name, ".csv"))
+  #write.csv(fgseaRes_out, file = paste0(input_directory,"t_fgsea_KEGG_results_", name, ".csv"))
+  write.csv(fgseaRes_out, file = paste0(input_directory,"t_fgsea_HPO_results_", name, ".csv"))
+  
+  padj_threshold = 0.01 # 0.05 for H, 0.001 for GO BP, 0.01 for KEGG
+  
+  # save sig pathways
+  sig_pathways_list[[name]] = fgseaRes$pathway[fgseaRes$padj < padj_threshold]
+  
+  # plot bubble plot
+  plot_df = as.data.frame(fgseaRes) %>%
+  filter(padj < padj_threshold)
+
+  bubble_plot = ggplot(plot_df,
+         aes(x = NES,
+             y = reorder(pathway, NES),
+             size = size,
+             color = -log10(padj))) +
+    geom_point() +
+    ggtitle(name) +
+    theme_bw()
+  print(bubble_plot)
+  ggsave(plot = bubble_plot, filename = paste0(input_directory,"t_fgsea_HPO_bubbleplot_", name, ".pdf"), height = 8, width = 8)
+
+}
+
+# upset plot of significant pathways
+
+
+```
+
+```{r gsea2}
+
+# Get gene sets from MSigDB
+
+#msig = msigdbr(species = "Homo sapiens",collection = "H")
+#msig = msigdbr(species = "Homo sapiens", collection = "C5", subcollection = "GO:BP")
+msig = msigdbr(species = "Homo sapiens", collection = "C2", subcollection = "CP:KEGG_LEGACY")
+
+tag = "KEGG"
+
+pathways = split(msig$gene_symbol, msig$gs_name)
+
+# data sets to compare
+male_hypnorm_dataset = data.frame(male_normhyp_data)
+female_hypnorm_dataset = data.frame(female_normhyp_data)
+
+# ------- male normhyp ---------
+
+# Create ranked vector
+# Common choice: moderated t-statistic
+male_hypnorm_ranks = male_hypnorm_dataset$t
+
+# Names must be gene symbols (or whatever ID matches pathway genes)
+names(male_hypnorm_ranks) = male_hypnorm_dataset$genes
+
+# Remove duplicates and NAs
+male_hypnorm_ranks = male_hypnorm_ranks[!is.na(male_hypnorm_ranks)]
+male_hypnorm_ranks = sort(male_hypnorm_ranks, decreasing = TRUE)
+
+# Run fgsea
+suppressWarnings({
+  fgseaRes_male_hypnorm = fgsea(
+    pathways = pathways,
+    stats = male_hypnorm_ranks,
+    minSize = 15,
+    maxSize = 500,
+    BPPARAM = SerialParam()
+  )
+})
+
+# Sort by significance
+fgseaRes_male_hypnorm = fgseaRes_male_hypnorm[order(fgseaRes_male_hypnorm$padj), ]
+
+# ------- female normhyp ---------
+
+# Create ranked vector
+# Common choice: moderated t-statistic
+female_hypnorm_ranks = female_hypnorm_dataset$t
+
+# Names must be gene symbols (or whatever ID matches pathway genes)
+names(female_hypnorm_ranks) = female_hypnorm_dataset$genes
+
+# Remove duplicates and NAs
+female_hypnorm_ranks = female_hypnorm_ranks[!is.na(female_hypnorm_ranks)]
+female_hypnorm_ranks = sort(female_hypnorm_ranks, decreasing = TRUE)
+
+# Run fgsea
+suppressWarnings({
+  fgseaRes_female_hypnorm = fgsea(
+    pathways = pathways,
+    stats = female_hypnorm_ranks,
+    minSize = 15,
+    maxSize = 500,
+    BPPARAM = SerialParam()
+  )
+})
+
+# Sort by significance
+fgseaRes_female_hypnorm = fgseaRes_female_hypnorm[order(fgseaRes_female_hypnorm$padj), ]
+
+# compare results
+
+comp = merge(
+  fgseaRes_male_hypnorm[, c("pathway", "NES", "padj")],
+  fgseaRes_female_hypnorm[, c("pathway", "NES", "padj")],
+  by = "pathway",
+  suffixes = c("_male", "_fem")
+)
+write.csv(comp, file = paste0(input_directory, "compare_fgsea_",tag,"_male_female_hypnorm.csv"), row.names = FALSE)
+
+# focus on gene sets significant in males or females
+sig_comp = subset(comp, padj_male < 0.05 | padj_fem < 0.05)
+sig_comp_color = ifelse(sig_comp$padj_male < 0.05 & sig_comp$padj_fem < 0.05,"red",ifelse(sig_comp$padj_male < 0.05, "blue", ifelse(sig_comp$padj_fem < 0.05, "orange", "grey70")))
+
+# plot comparison
+ggplot(comp, aes(x = NES_male, y = NES_fem)) +
+  geom_point(color = "grey70") +
+  geom_point(data = sig_comp, color = sig_comp_color) +
+  geom_text_repel(
+    data = sig_comp,
+    aes(label = pathway),
+    size = 2,
+    max.overlaps = 30
+  ) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_vline(xintercept = 0, linetype = 2) +
+  theme_bw() +
+  labs(x = "NES, male, hyp vs norm", y = "NES, female, hyp vs norm")
+ggsave(filename = paste0(input_directory, "compare_",tag,"_male_female_hypnorm.pdf"), height = 6, width = 10)
+
+# plot enrichment in both cases
+# plotEnrichment(pathways[["HALLMARK_HEME_METABOLISM"]],male_hypnorm_ranks)
+# plotEnrichment(pathways[["HALLMARK_HEME_METABOLISM"]],female_hypnorm_ranks)
+
+# opposite sign results
+opposite_sign = sig_comp$pathway[(sig_comp$NES_male > 0 & sig_comp$NES_fem < 0) | (sig_comp$NES_male < 0 & sig_comp$NES_fem > 0)]
+
+opposite_sign_male_leading_edge = fgseaRes_male_hypnorm[fgseaRes_male_hypnorm$pathway %in% opposite_sign,]
+opposite_sign_female_leading_edge = fgseaRes_female_hypnorm[fgseaRes_female_hypnorm$pathway %in% opposite_sign,]
+
+con = file(paste0(input_directory,"opposite_sign_",tag,"_forKEGGMapper.txt"), open = "w")
+for (pathway in opposite_sign) {
+  
+  cat("###", 
+      pathway,
+      "(male: NES = ",
+      sig_comp$NES_male[sig_comp$pathway == pathway],
+      "padj = ",
+      sig_comp$padj_male[sig_comp$pathway == pathway],
+      ")\n", file = con)
+  
+  male_leading_edge_genes = fgseaRes_male_hypnorm$leadingEdge[fgseaRes_male_hypnorm$pathway == pathway][[1]]
+  male_leading_edge_data = male_normhyp_data[male_normhyp_data$genes %in% male_leading_edge_genes,]
+  male_leading_edge_data$t = ifelse(male_leading_edge_data$t > 0, "red","blue")
+  
+  write.table(male_leading_edge_data[,c("genes","t")], file = con, sep = "\t", row.names = FALSE, quote = FALSE)
+  
+  cat("###", 
+      pathway,
+      "(female: NES = ",
+      sig_comp$NES_fem[sig_comp$pathway == pathway],
+      ", padj = ",
+      sig_comp$padj_fem[sig_comp$pathway == pathway],
+      ")\n", file = con)
+  
+  female_leading_edge_genes = fgseaRes_female_hypnorm$leadingEdge[fgseaRes_female_hypnorm$pathway == pathway][[1]]
+  female_leading_edge_data = female_normhyp_data[female_normhyp_data$genes %in% female_leading_edge_genes,]
+  female_leading_edge_data$t = ifelse(female_leading_edge_data$t > 0, "red","blue")
+  
+  write.table(female_leading_edge_data[,c("genes","t")], file = con, sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
+   cat("\n\n", file = con)
+  
+}
+close(con)
+
+# same sign results -- print any that have less than half leading edge genes different
+same_sign = sig_comp$pathway[((sig_comp$NES_male > 0 & sig_comp$NES_fem > 0) | (sig_comp$NES_male < 0 & sig_comp$NES_fem < 0)) & sig_comp$padj_male < 0.05 & sig_comp$padj_fem < 0.05]
+
+same_sign_male_leading_edge = fgseaRes_male_hypnorm[fgseaRes_male_hypnorm$pathway %in% same_sign,]
+same_sign_female_leading_edge = fgseaRes_female_hypnorm[fgseaRes_female_hypnorm$pathway %in% same_sign,]
+
+con = file(paste0(input_directory,"same_sign_",tag,"_forKEGGMapper.txt"), open = "w")
+for (pathway in same_sign) {
+  
+  male_leading_edge_genes = fgseaRes_male_hypnorm$leadingEdge[fgseaRes_male_hypnorm$pathway == pathway][[1]]
+  female_leading_edge_genes = fgseaRes_female_hypnorm$leadingEdge[fgseaRes_female_hypnorm$pathway == pathway][[1]]
+  intersecting_genes = intersect(male_leading_edge_genes, female_leading_edge_genes)
+  
+  if (length(intersecting_genes) < max(length(male_leading_edge_genes),length( female_leading_edge_genes)) / 4) {
+    male_leading_edge_data = male_normhyp_data[male_normhyp_data$genes %in% male_leading_edge_genes,]
+    male_leading_edge_data$t = ifelse(male_leading_edge_data$t > 0, "red","blue")
+    
+    female_leading_edge_data = female_normhyp_data[female_normhyp_data$genes %in% female_leading_edge_genes,]
+    female_leading_edge_data$t = ifelse(female_leading_edge_data$t > 0, "red","blue")
+    
+    cat("###", 
+        pathway,
+        "(male: NES = ",
+        sig_comp$NES_male[sig_comp$pathway == pathway],
+        "padj = ",
+        sig_comp$padj_male[sig_comp$pathway == pathway],
+        ")\n", file = con)
+    
+    write.table(male_leading_edge_data[,c("genes","t")], file = con, sep = "\t", row.names = FALSE, quote = FALSE)
+    
+    cat("###", 
+        pathway,
+        "(female: NES = ",
+        sig_comp$NES_fem[sig_comp$pathway == pathway],
+        ", padj = ",
+        sig_comp$padj_fem[sig_comp$pathway == pathway],
+        ")\n", file = con)
+    
+    write.table(female_leading_edge_data[,c("genes","t")], file = con, sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
+    cat("\n\n", file = con)
+  }
+}
+close(con)
+
+# sig in one but not the other
+sig1_sign = sig_comp$pathway[(sig_comp$padj_male < 0.01 & sig_comp$padj_fem > 0.5) | (sig_comp$padj_male > 0.5 & sig_comp$padj_fem < 0.05)]
+
+sig1_sign_male_leading_edge = fgseaRes_male_hypnorm[fgseaRes_male_hypnorm$pathway %in% sig1_sign,]
+sig1_sign_female_leading_edge = fgseaRes_female_hypnorm[fgseaRes_female_hypnorm$pathway %in% sig1_sign,]
+
+con = file(paste0(input_directory,"sig1_",tag,"_forKEGGMapper.txt"), open = "w")
+for (pathway in sig1_sign) {
+  
+  male_leading_edge_genes = fgseaRes_male_hypnorm$leadingEdge[fgseaRes_male_hypnorm$pathway == pathway][[1]]
+  female_leading_edge_genes = fgseaRes_female_hypnorm$leadingEdge[fgseaRes_female_hypnorm$pathway == pathway][[1]]
+  intersecting_genes = intersect(male_leading_edge_genes, female_leading_edge_genes)
+  
+    male_leading_edge_data = male_normhyp_data[male_normhyp_data$genes %in% male_leading_edge_genes,]
+    male_leading_edge_data$t = ifelse(male_leading_edge_data$t > 0, "red","blue")
+    
+    female_leading_edge_data = female_normhyp_data[female_normhyp_data$genes %in% female_leading_edge_genes,]
+    female_leading_edge_data$t = ifelse(female_leading_edge_data$t > 0, "red","blue")
+    
+  cat("###", 
+      pathway,
+      "(male: NES = ",
+      sig_comp$NES_male[sig_comp$pathway == pathway],
+      "padj = ",
+      sig_comp$padj_male[sig_comp$pathway == pathway],
+      ")\n", file = con)
+  
+  write.table(male_leading_edge_data[,c("genes","t")], file = con, sep = "\t", row.names = FALSE, quote = FALSE)
+  
+  cat("###", 
+      pathway,
+      "(female: NES = ",
+      sig_comp$NES_fem[sig_comp$pathway == pathway],
+      ", padj = ",
+      sig_comp$padj_fem[sig_comp$pathway == pathway],
+      ")\n", file = con)
+  
+  write.table(female_leading_edge_data[,c("genes","t")], file = con, sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
+  cat("\n\n", file = con)
+  
+}
+close(con)
+
+```
+
+# clusterProfiler
+
+```{r clusterprofiler, eval=FALSE, include=FALSE}
+
+for (name in names(datasets)) {
+
+  dataset = datasets[[name]]
+  
+  # Create ranked vector
+  # Common choice: moderated t-statistic
+  ranks = dataset$t
+  
+  # Names must be gene symbols (or whatever ID matches pathway genes)
+  names(ranks) = dataset$genes
+  
+  # Remove duplicates and NAs
+  ranks = ranks[!is.na(ranks)]
+  ranks = sort(ranks, decreasing = TRUE)
+  
+  # Get Hallmark pathways from MSigDB
+  msig = msigdbr(species = "Homo sapiens",collection = "H")
+  #msig = msigdbr(species = "Homo sapiens", collection = "C5", subcollection = "GO:BP")
+  #msig = msigdbr(species = "Homo sapiens", collection = "C2", subcollection = "CP:KEGG_LEGACY")
+  
+  term2gene = msig[, c("gs_name", "gene_symbol")]
+  
+  gse = GSEA(
+    geneList = ranks,
+    TERM2GENE = term2gene,
+    by = "fgsea",
+    pvalueCutoff = 0.05,
+    minGSSize = 15,
+    maxGSSize = 500,
+    verbose = FALSE
+  )
+  
+  gse = pairwise_termsim(gse, method = "JC")
+  
+  # plot only significant categories
+  sig_terms = as.data.frame(gse)$ID[as.data.frame(gse)$p.adjust < 0.05]
+  if(length(sig_terms > 0)) {
+    ep = emapplot(
+      gse,
+      showCategory = sig_terms,
+      layout = "kk",
+      color = "p.adjust"
+    )
+    print(ep)
+  }
+  
+  sig_terms = as.data.frame(gse)$ID[as.data.frame(gse)$p.adjust < 0.01]
+  if(length(sig_terms) > 0) {
+    cp = cnetplot(
+      gse,
+      showCategory = sig_terms
+    )
+    print (cp)
+  }
+}
+
+```
+
+# variance gsea
+
+```{r var_gsea}
+
+var_data = read.csv("C:/Users/plaisiersb/OneDrive - National Institutes of Health/Documents/Projects/Placenta/HG38/Correct_BatchCovariate/variance_with_means.csv")
+
+test_columns = c("AvgVariance_male_norm", "AvgVariance_male_hyp", "AvgVariance_fem_norm", "AvgVariance_fem_hyp")
+
+# correlation matrix of variation
+var_data_filter = var_data[, colnames(var_data) %in% test_columns]
+rownames(var_data_filter) = var_data$Geneid
+
+cor_mat = cor(var_data_filter,
+               method = "pearson",
+               use = "pairwise.complete.obs")
+
+corrplot(
+  cor_mat,
+  method = "color",
+  type = "upper",
+  order = "hclust",
+  addCoef.col = "black",
+  tl.col = "black",
+  tl.srt = 45,
+  diag = FALSE,
+  col = colorRampPalette(
+    c("blue", "white", "red")
+  )(200)
+)
+
+# gsea
+
+# since variance in gene expression is well correlated across sample groups,
+#   run gsea on average
+ranks = rowMeans(var_data[, colnames(var_data) %in% c("AvgVariance_fem_hyp", "AvgVariance_fem_norm", "AvgVariance_male_norm", "AvgVariance_male_hyp")])
+
+# Names must be gene symbols (or whatever ID matches pathway genes)
+names(ranks) = var_data$Geneid
+
+# Remove duplicates and NAs
+ranks = ranks[!is.na(ranks)]
+ranks = sort(ranks, decreasing = TRUE)
+
+# Get Hallmark pathways from MSigDB
+msig = msigdbr(species = "Homo sapiens",collection = "H")
+#msig = msigdbr(species = "Homo sapiens", collection = "C5", subcollection = "GO:BP")
+#msig = msigdbr(species = "Homo sapiens", collection = "C2", subcollection = "CP:KEGG_LEGACY")
+
+term2gene = msig[, c("gs_name", "gene_symbol")]
+
+gse = GSEA(
+  geneList = ranks,
+  TERM2GENE = term2gene,
+  by = "fgsea",
+  pvalueCutoff = 0.05,
+  minGSSize = 15,
+  maxGSSize = 500,
+  verbose = FALSE, 
+  scoreType = "pos"
+)
+
+write.csv(gse@result, file = paste0(input_directory,"gsea_H_AvgVar_results.csv"))
+
+plot_df = as.data.frame(gse@result) %>%
+  filter(qvalue < 0.05) # 0.05 for H, 0.001 for GO BP
+  
+bubble_plot = ggplot(plot_df,
+       aes(x = NES,
+           y = reorder(ID, NES),
+           size = setSize,
+           color = -log10(qvalue))) +
+  geom_point() + 
+  ggtitle("Average Variance") +
+  theme_bw()
+print(bubble_plot)
+
+gse = pairwise_termsim(gse, method = "JC")
+
+# plot only significant categories
+sig_terms = as.data.frame(gse)$ID[as.data.frame(gse)$p.adjust < 0.05]
+if(length(sig_terms > 0)) {
+  ep = emapplot(
+    gse,
+    showCategory = sig_terms,
+    layout = "kk",
+    color = "p.adjust"
+  ) + 
+    ggtitle("Avg Variance")
+  print(ep)
+}
+
+
+```
+
+# Using different measure of variance
+
+```{r}
+
+# load data
+lcpm_norm_batchcorrect_data = read.csv("C:/Users/plaisiersb/OneDrive - National Institutes of Health/Documents/Projects/Placenta/HG38/Correct_BatchCovariate/lcpm_norm_batchcorrected.csv")
+rownames(lcpm_norm_batchcorrect_data) = lcpm_norm_batchcorrect_data$gene
+lcpm_norm_batchcorrect_data$gene = NULL
+
+pheno = data.frame(colnames(lcpm_norm_batchcorrect_data)[-1])
+colnames(pheno) = c("sample")
+pheno$sex = ifelse(grepl("XY",pheno$sample, fixed = TRUE),"male","female")
+pheno$status = ifelse(grepl("Cont",pheno$sample, fixed = TRUE),"normotensive","hypertensive")
+pheno$placenta = str_split(pheno$sample, "_", simplify = TRUE)[, 1]
+pheno$quadrant = str_split(pheno$sample, "_", simplify = TRUE)[, 2]
+pheno$sex_status = paste0(pheno$sex, "_", pheno$status)
+
+# create placenta level pheno file for merging later
+pheno_placenta = pheno
+pheno_placenta$sample = NULL
+pheno_placenta$quadrant = NULL
+pheno_placenta = pheno_placenta[!duplicated(pheno_placenta$placenta), ]
+
+# Ensure pheno matches expression matrix
+lcpm_norm_batchcorrect_data = lcpm_norm_batchcorrect_data[,pheno$sample]
+stopifnot(all(pheno$sample == colnames(lcpm_norm_batchcorrect_data)))
+
+
+placentas = unique(pheno$placenta)
+
+residual_var_list = list()
+
+for(placenta in placentas){
+
+    placenta_samples = pheno$sample[
+        pheno$placenta == placenta
+    ]
+
+    expr_placenta = lcpm_norm_batchcorrect_data[, placenta_samples, drop = FALSE]
+
+    # Mean expression per gene
+    gene_mean = rowMeans(expr_placenta)
+
+    # Variance across individuals
+    gene_var = apply(expr_placenta, 1, var)
+
+    # Avoid log(0)
+    gene_var[gene_var <= 0] = min(
+        gene_var[gene_var > 0]
+    ) / 2
+
+    # Fit mean-variance trend
+    fit = loess(
+        log10(gene_var) ~ gene_mean,
+        span = 0.5
+    )
+
+    # Residual variability
+    resid_var = residuals(fit)
+
+    residual_var_list[[placenta]] = data.frame(
+        gene = rownames(lcpm_norm_batchcorrect_data),
+        mean_logCPM = gene_mean,
+        variance = gene_var,
+        residual_variability = resid_var
+    )
+}
+
+residual_var_mat = do.call(
+    cbind,
+    lapply(
+        residual_var_list,
+        function(x) x$residual_variability
+    )
+)
+
+rownames(residual_var_mat) = rownames(lcpm_norm_batchcorrect_data)
+
+# grab high variance genes 
+high_var_genes = lapply(
+  residual_var_list,
+  function(df) {
+    df$gene[df$residual_variability > 1]
+  }
+)
+
+# tally genes identified as variable
+
+# Combine all genes from all tissues
+all_genes = unlist(high_var_genes)
+
+# Count occurrences
+gene_counts = table(all_genes)
+
+# Convert to data frame
+gene_count_df = data.frame(
+  gene = names(gene_counts),
+  n_tissues = as.integer(gene_counts),
+  row.names = NULL
+)
+
+# Sort by number of tissues
+gene_count_df = gene_count_df[
+  order(gene_count_df$n_tissues, decreasing = TRUE),
+]
+
+# plot genes with high residual variation and high expression
+var_data$AveExp = rowMeans(var_data[,grepl("AveExpr_",colnames(var_data))])
+gene_count_df$AveExpr = var_data$AveExp[match(gene_count_df$gene,var_data$Geneid)]
+gene_count_df_filter = gene_count_df[gene_count_df$AveExpr > 1,]
+
+genes_to_plot = gene_count_df_filter$gene[gene_count_df_filter$n_tissues == 20]
+genes_to_plot = genes_to_plot[1:5]
+
+# filter for genes of interest
+expr_data_for_plotting = lcpm_norm_batchcorrect_data
+expr_data_for_plotting$gene = rownames(lcpm_norm_batchcorrect_data)
+
+for (selected_gene in genes_to_plot) {
+  if (! selected_gene %in% expr_data_for_plotting$gene) {  print (paste(selected_gene, "not in dataset"))}
+  
+  gene_expr = expr_data_for_plotting[expr_data_for_plotting$gene == selected_gene,]
+  gene_expr_long = melt(gene_expr)
+  colnames(gene_expr_long) = c("gene","sample","expression")
+  gene_expr_long = merge(gene_expr_long, pheno, by = "sample")
+  
+  # plot gene expression in 4 groups
+  gene_expr_long$sex_status = factor(gene_expr_long$sex_status, levels = c("male_normotensive", "male_hypertensive", "female_normotensive","female_hypertensive"))
+  gene_expr_long$placenta = factor(gene_expr_long$placenta, levels = unique(pheno$placenta))
+  gene_expr_long$sample = factor(gene_expr_long$sample, levels = pheno$sample)
+  
+  plot = ggplot(gene_expr_long, aes(x = placenta, y = expression, color = sex_status, group = sex_status, fill = sex_status)) + 
+    geom_jitter(alpha  = 0.75, width = 0.2) +
+    geom_boxplot(alpha  = 0.75) +
+    scale_color_manual(values = c("lightblue", "blue","gold", "orange")) +
+    scale_fill_manual(values = c("lightblue", "blue","gold", "orange")) +
+    ggtitle(selected_gene) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(size = 6, angle = 90, vjust = 1, hjust = 1)) 
+  print(plot)
+}
+
+# enrichment analysis in genes that have high variance in all placentas
+variable_all_tissues = gene_count_df$gene[gene_count_df$n_tissues == 20 & gene_count_df$AveExpr > 1]
+all_convert = mapIds(org.Hs.eg.db,
+                  keys = variable_all_tissues,
+                  keytype = "SYMBOL",
+                  column = "ENTREZID",
+                  multiVals = "first")
+
+all = na.omit(unname(all_convert)) 
+ 
+bp = enrichGO(
+  gene          = all,
+  OrgDb         = org.Hs.eg.db,
+  keyType       = "ENTREZID",
+  ont           = "BP",
+  pAdjustMethod = "BH",
+  pvalueCutoff  = 0.05,
+  qvalueCutoff  = 0.1,
+  readable      = TRUE
+)
+mf = enrichGO(
+  gene          = all,
+  OrgDb         = org.Hs.eg.db,
+  keyType       = "ENTREZID",
+  ont           = "MF",
+  pAdjustMethod = "BH",
+  pvalueCutoff  = 0.05,
+  qvalueCutoff  = 0.1,
+  readable      = TRUE
+)
+
+dotplot(bp, showCategory = 30) + ggtitle("High residual variance - GO BP enrichment") + theme(axis.text.y = element_text(size = 6))
+dotplot(mf, showCategory = 30) + ggtitle("High residual variance - GO MF enrichment") + theme(axis.text.y = element_text(size = 6))
+
+bp_readable = setReadable(bp, 'org.Hs.eg.db', 'ENTREZID')
+cnetplot(bp_readable)
+
+# mean by var
+
+plot(
+    gene_mean,
+    log10(gene_var),
+    pch = 16,
+    cex = 0.4
+)
+
+ord <- order(gene_mean)
+
+lines(
+    gene_mean[ord],
+    predict(fit)[ord],
+    col = "red",
+    lwd = 2
+)
+
+# correlation across placentas
+
+cor_mat = cor(residual_var_mat,
+               method = "pearson",
+               use = "pairwise.complete.obs")
+
+corrplot(
+  cor_mat,
+  method = "color",
+  type = "upper",
+  order = "hclust",
+  addCoef.col = "black",
+  tl.col = "black",
+  tl.srt = 45,
+  number.cex = 0.3,
+  diag = FALSE,
+  col = colorRampPalette(
+    c("blue", "white", "red")
+  )(200)
+) 
+
+# get percent ranks
+
+percent_rank_mat = apply(
+  residual_var_mat,
+  2,
+  function(x) rank(x, ties.method = "average") / length(x)
+)
+
+percent_rank_mat = as.matrix(percent_rank_mat)
+
+rownames(percent_rank_mat) = rownames(residual_var_mat)
+
+write.csv(as.data.frame(residual_var_mat), file = paste0(input_directory, "residual_var.csv"))
+write.csv(as.data.frame(percent_rank_mat), file = paste0(input_directory, "residual_var_percentrank.csv"))
+
+# gsea for genes ranked by median residual variance across all placentas
+res_var_medians = rowMedians(residual_var_mat)
+names(res_var_medians) = rownames(residual_var_mat)
+res_var_medians = sort(res_var_medians, decreasing = TRUE)
+
+# histogram of median variance
+res_var_medians_df = as.data.frame(res_var_medians)
+res_var_median_stats = res_var_medians_df %>%
+  summarise(
+    mean_val = mean(res_var_medians),
+    median_val = median(res_var_medians),
+    skew_val = skewness(res_var_medians)
+  )
+
+ggplot(res_var_medians_df, aes(x = res_var_medians)) +
+  geom_histogram() +
+  geom_vline(data = res_var_median_stats, aes(xintercept = mean_val), 
+             color = "red", linetype = "dashed", linewidth = 1) +
+  annotate("label", x = max(res_var_medians_df$res_var_medians) * 0.6, y = 1000,
+           label = paste(
+             "Mean:", round(res_var_median_stats$mean_val, 2), "\n",
+             "Median:", round(res_var_median_stats$median_val, 2), "\n",
+             "Skew:", round(res_var_median_stats$skew_val, 2)
+           ),
+           hjust = 0, vjust = 1, color = "black",
+           size = 4, fontface = "bold",
+           fill = "white") +
+  theme_minimal()
+print(res_var_median_stats)
+ggsave(filename = paste0(input_directory, "residual_var_medians_histogram.pdf"))
+
+# Get Hallmark pathways from MSigDB
+msig = msigdbr(species = "Homo sapiens",collection = "H")
+#msig = msigdbr(species = "Homo sapiens", collection = "C5", subcollection = "GO:BP")
+#msig = msigdbr(species = "Homo sapiens", collection = "C2", subcollection = "CP:KEGG_LEGACY")
+
+pathways = split(msig$gene_symbol, msig$gs_name)
+
+# Run fgsea
+suppressWarnings({
+  fgseaRes = fgsea(
+    pathways = pathways,
+    stats = res_var_medians,
+    minSize = 15,
+    maxSize = 500
+  )
+})
+
+# Sort by significance
+fgseaRes = fgseaRes[order(fgseaRes$padj), ]
+
+# write out results
+fgseaRes_out = as.data.frame(fgseaRes)
+fgseaRes_out$leadingEdge = sapply(fgseaRes_out$leadingEdge, paste, collapse = ",")
+write.csv(fgseaRes_out, file = paste0(input_directory, "median_res_var_H_fgsea.csv"))
+
+# plot gsea results by residual variance
+
+plot_df = as.data.frame(fgseaRes) %>%
+  filter(padj < 0.01) # 0.01 for H, 0.001 for GO BP
+  
+bubble_plot = ggplot(plot_df,
+       aes(x = NES,
+           y = reorder(pathway, NES),
+           # size = size,
+           # color = -log10(padj))) +
+           size = -log10(padj),
+           color = NES)) +
+  geom_point() + 
+  scale_color_gradient2(low = "royalblue3", mid = "white", high = "firebrick3",midpoint = median(res_var_medians_df$res_var_medians, na.rm = TRUE)) +
+  ggtitle("Ranked by Median Residual Variance") +
+  theme_bw()
+print(bubble_plot)
+ggsave(plot = bubble_plot, filename = paste0(input_directory,"fgsea_H_bubbleplot_residual_var.pdf"), height = 6, width = 9)
+
+# repeat with subgroups
+#----------------
+
+subgroups = levels(as.factor(pheno$sex_status))
+
+for (current_subgroup in subgroups) {
+  subset_mat = residual_var_mat[,colnames(residual_var_mat) %in% pheno$placenta[pheno$sex_status == current_subgroup]]
+  res_var_medians = rowMedians(subset_mat)
+  names(res_var_medians) = rownames(subset_mat)
+  res_var_medians = sort(res_var_medians, decreasing = TRUE)
+  res_var_medians_df = as.data.frame(res_var_medians)
+
+  # Get Hallmark pathways from MSigDB
+  msig = msigdbr(species = "Homo sapiens",collection = "H")
+  #msig = msigdbr(species = "Homo sapiens", collection = "C5", subcollection = "GO:BP")
+  #msig = msigdbr(species = "Homo sapiens", collection = "C2", subcollection = "CP:KEGG_LEGACY")
+  
+  pathways = split(msig$gene_symbol, msig$gs_name)
+  
+  # Run fgsea
+  suppressWarnings({
+    fgseaRes = fgsea(
+      pathways = pathways,
+      stats = res_var_medians,
+      minSize = 15,
+      maxSize = 500
+    )
+  })
+  
+  # Sort by significance
+  fgseaRes = fgseaRes[order(fgseaRes$padj), ]
+  
+  # write out results
+  fgseaRes_out = as.data.frame(fgseaRes)
+  fgseaRes_out$leadingEdge = sapply(fgseaRes_out$leadingEdge, paste, collapse = ",")
+  write.csv(fgseaRes_out, file = paste0(input_directory, "median_res_var_H_fgsea_",current_subgroup, ".csv"))
+  
+  # plot gsea results by residual variance
+  
+  plot_df = as.data.frame(fgseaRes) %>%
+    filter(padj < 0.001) # 0.05 for H, 0.001 for GO BP
+    
+  bubble_plot = ggplot(plot_df,
+         aes(x = NES,
+             y = reorder(pathway, NES),
+             # size = size,
+             # color = -log10(padj))) +
+             size = -log10(padj),
+             color = NES)) +
+    geom_point() + 
+    scale_color_gradient2(low = "royalblue3", mid = "white", high = "firebrick3",midpoint = median(res_var_medians_df$res_var_medians, na.rm = TRUE)) +
+    ggtitle(paste0 ("Ranked by Median Residual Variance: ", current_subgroup)) +
+    theme_bw()
+  print(bubble_plot)
+  ggsave(plot = bubble_plot, filename = paste0(input_directory,"fgsea_H_bubbleplot_residual_var_", current_subgroup, ".pdf"), height = 6, width = 9)
+
+}
+
+#----------------
+# plot top residual variance genes
+top_res_var_genes = names(res_var_medians[1:5])
+
+expr_data_for_plotting = lcpm_norm_batchcorrect_data
+expr_data_for_plotting$gene = rownames(lcpm_norm_batchcorrect_data)
+
+for (selected_gene in top_res_var_genes) {
+  if (! selected_gene %in% expr_data_for_plotting$gene) {  print (paste(selected_gene, "not in dataset"))}
+  
+  gene_expr = expr_data_for_plotting[expr_data_for_plotting$gene == selected_gene,]
+  gene_expr_long = melt(gene_expr)
+  colnames(gene_expr_long) = c("gene","sample","expression")
+  gene_expr_long = merge(gene_expr_long, pheno, by = "sample")
+  
+  # plot gene expression in 4 groups
+  gene_expr_long$sex_status = factor(gene_expr_long$sex_status, levels = c("male_normotensive", "male_hypertensive", "female_normotensive","female_hypertensive"))
+  gene_expr_long$placenta = factor(gene_expr_long$placenta, levels = unique(pheno$placenta))
+  gene_expr_long$sample = factor(gene_expr_long$sample, levels = pheno$sample)
+  
+  plot = ggplot(gene_expr_long, aes(x = placenta, y = expression, color = sex_status, group = sex_status, fill = sex_status)) + 
+    geom_jitter(alpha  = 0.75, width = 0.2) +
+    geom_boxplot(alpha  = 0.75) +
+    scale_color_manual(values = c("lightblue", "blue","gold", "orange")) +
+    scale_fill_manual(values = c("lightblue", "blue","gold", "orange")) +
+    ggtitle(selected_gene) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(size = 6, angle = 90, vjust = 1, hjust = 1)) 
+  print(plot)
+}
+
+# heatmap of percent rank for placenta PE genes
+placenta_PE_data = read.csv("C:/Users/plaisiersb/OneDrive - National Institutes of Health/Documents/Projects/Placenta/HG38/placenta_markers.csv", check.names = FALSE)
+
+percent_rank_df = data.frame(percent_rank_mat)
+placenta_PE_percentrank = percent_rank_df[rownames(percent_rank_df) %in% placenta_PE_data$`Gene symbol`,]
+
+idx = match(placenta_PE_data$`Gene symbol`, rownames(placenta_PE_percentrank))
+
+placenta_PE_percentrank = placenta_PE_percentrank[idx[!is.na(idx)], ]
+pheatmap(as.matrix(placenta_PE_percentrank), cluster_rows = FALSE, cluster_cols = FALSE, color = colorRampPalette(c("white", "red"))(100), display_numbers = TRUE, fontsize_row = 6, filename = paste0(input_directory, "placenta_PE_markers_percentrank_heatmap.pdf"))
+
+# heatmap of residual variance for placenta PE genes
+
+residual_var_df = data.frame(residual_var_mat)
+placenta_PE_resvar = residual_var_df[rownames(residual_var_df) %in% placenta_PE_data$`Gene symbol`,]
+
+idx = match(placenta_PE_data$`Gene symbol`, rownames(placenta_PE_resvar))
+
+placenta_PE_resvar = placenta_PE_resvar[idx[!is.na(idx)], ]
+pheatmap(as.matrix(placenta_PE_resvar), cluster_rows = FALSE, cluster_cols = FALSE, color = colorRampPalette(c("white", "red"))(100), display_numbers = TRUE, fontsize_row = 6, filename = paste0(input_directory, "placenta_PE_markers_resvar_heatmap.pdf"))
+```
+
+# plot genes of interest
+
+```{r plot_genes, eval=FALSE, include=FALSE}
+
+genes_to_plot = c("PCP4L1","PDGFA","AC084026.1")
+
+lcpm_norm_batchcorrect_data = read.csv("C:/Users/plaisiersb/OneDrive - National Institutes of Health/Documents/Projects/Placenta/HG38/Correct_BatchCovariate/lcpm_norm_batchcorrected.csv")
+
+for (selected_gene in genes_to_plot) {
+  if (! selected_gene %in% lcpm_norm_batchcorrect_data$gene) {  print (paste(selected_gene, "not in dataset"))}
+  
+  gene_expr = lcpm_norm_batchcorrect_data[lcpm_norm_batchcorrect_data$gene == selected_gene,]
+  gene_expr_long = melt(gene_expr)
+  colnames(gene_expr_long) = c("gene","sample","expression")
+  gene_expr_long = merge(gene_expr_long, pheno, by = "sample")
+  
+  # plot gene expression in 4 groups
+  #gene_expr_long$sex_status = factor(gene_expr_long$sex_status, levels = c("male_normotensive", "male_hypertensive", "female_normotensive","female_hypertensive"))
+  gene_expr_long$sex_status = factor(gene_expr_long$sex_status, levels = c("male_normotensive",  "female_normotensive","male_hypertensive", "female_hypertensive"))
+  gene_expr_long$placenta = factor(gene_expr_long$placenta, levels = unique(pheno$placenta))
+  gene_expr_long$sample = factor(gene_expr_long$sample, levels = pheno$sample)
+  
+  plot = ggplot(gene_expr_long, aes(x = placenta, y = expression, color = sex_status, group = sex_status, fill = sex_status)) + 
+    geom_jitter(alpha  = 0.75, width = 0.2) +
+    geom_boxplot(alpha  = 0.75) +
+    scale_color_manual(values = c("lightblue", "blue","gold", "orange")) +
+    scale_fill_manual(values = c("lightblue", "blue","gold", "orange")) +
+    ggtitle(selected_gene) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(size = 6, angle = 90, vjust = 1, hjust = 1)) 
+  print(plot)
+}
+
+```
+# Compare 3 enrichment results
+
+For all three GSEA runs (H, GO BP, KEGG), for each sex (hypnorm), print all results that are significant in that sex (adjp < 0.05), but definitely not in the other (adjp > 0.5).  
+
+```{r}
+
+male_profile_files = c("t_fgsea_KEGG_results_male_normhyp.csv", "t_fgsea_GOBP_results_male_normhyp.csv", "t_fgsea_H_results_male_normhyp.csv")
+
+female_profile_files = c("t_fgsea_KEGG_results_female_normhyp.csv", "t_fgsea_GOBP_results_female_normhyp.csv", "t_fgsea_H_results_female_normhyp.csv")
+
+results1 = read.csv(paste0(input_directory,male_profile_files[1]))
+results2 = read.csv(paste0(input_directory,male_profile_files[2]))
+results3 = read.csv(paste0(input_directory,male_profile_files[3]))
+male_results = rbind(results1, results2, results3)
+
+results1 = read.csv(paste0(input_directory,female_profile_files[1]))
+results2 = read.csv(paste0(input_directory,female_profile_files[2]))
+results3 = read.csv(paste0(input_directory,female_profile_files[3]))
+female_results = rbind(results1, results2, results3)
+
+merge_results = merge(male_results, female_results, by = "pathway", suffixes = c("_male", "_fem"))
+
+# filters
+pval_threshold = 0.05
+merge_results_filtered = merge_results[merge_results$padj_male < pval_threshold | merge_results$padj_fem < pval_threshold, ]
+
+male_specific = na.omit(merge_results_filtered[merge_results_filtered$padj_male < pval_threshold & merge_results_filtered$padj_fem > 0.5,])
+
+male_specific_up = na.omit(male_specific[male_specific$NES_male > 0,])
+male_specific_down = na.omit(male_specific[male_specific$NES_male < 0,])
+
+female_specific = na.omit(merge_results_filtered[merge_results_filtered$padj_male > 0.5 & merge_results_filtered$padj_fem < pval_threshold,])
+
+female_specific_up = na.omit(female_specific[female_specific$NES_fem > 0,])
+female_specific_down = na.omit(female_specific[female_specific$NES_fem < 0,])
+
+both_sig = na.omit(merge_results_filtered[merge_results_filtered$padj_male < pval_threshold & merge_results_filtered$padj_fem < pval_threshold,])
+
+both_sig_up = both_sig[both_sig$NES_male > 0 & both_sig$NES_fem > 0,]
+both_sig_down = both_sig[both_sig$NES_male < 0 & both_sig$NES_fem < 0,]
+
+list_of_profiles = list("male_specific_up" = male_specific_up, 
+                        "male_specific_down" = male_specific_down, 
+                        "female_specific_up" = female_specific_up,
+                        "both_sig_up" = both_sig_up,
+                        "both_sig_down" = both_sig_down)
+
+for (profile in names(list_of_profiles)) {
+  # similarity tree
+  
+  enr_data = list_of_profiles[[profile]]
+  
+  if(grepl("female", profile, fixed = TRUE)) {
+    leading_edge_list = setNames(
+      strsplit(enr_data$leadingEdge_fem, ","),
+      enr_data$pathway
+    )
+  } else {
+    leading_edge_list = setNames(
+      strsplit(enr_data$leadingEdge_male, ","),
+      enr_data$pathway
+    )
+  }
+  
+  # remove any leading/trailing whitespace
+  leading_edge_list = lapply(
+    leading_edge_list,
+    trimws
+  )
+  
+  # calculate overlap similarity matrix
+  jaccard = function(x, y) {
+    length(intersect(x, y)) / length(union(x, y))
+  }
+  
+  pathways = names(leading_edge_list)
+  
+  sim_mat = outer(
+    pathways, pathways,
+    Vectorize(function(a, b) {
+      jaccard(leading_edge_list[[a]], leading_edge_list[[b]])
+    })
+  )
+  
+  rownames(sim_mat) = pathways
+  colnames(sim_mat) = pathways
+    
+  # turn similarity into distance and cluster
+  dist_mat = as.dist(1 - sim_mat)
+  hc = hclust(dist_mat, method = "average")
+  
+  # plot dendrogram
+  pdf(
+    paste0(input_directory,"pathway_dendrogram_",profile,".pdf"),
+    width = 30,
+    height = 10
+  )
+  
+  plot (hc, cex = 0.4)
+  
+  dev.off()
+
+}
+```
+
+
+# List all the packages used for future reference
+```{r SessionInfo}
+sessionInfo()
+```
+
