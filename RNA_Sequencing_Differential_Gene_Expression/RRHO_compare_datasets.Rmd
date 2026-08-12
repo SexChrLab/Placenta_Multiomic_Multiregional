@@ -1,0 +1,227 @@
+---
+title: "Sex diff genes in norm vs hyp"
+author: "Seema Plaisier"
+date: "`r format(Sys.time(), '%m/%d/%y')`"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r ReportingOptions, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(tidy.opts = list(width.cutoff = 70), tidy = TRUE)
+options(width = 70)
+```
+
+# Load packages
+
+Install the necessary packages for our analysis.  The function 'require' returns a true value if it is already installed, so if it is not, we need to install before loading
+
+```{r Packages, warning=FALSE}
+
+library(RRHO)
+library(ggplot2)
+
+```
+
+
+# Sex diff genes
+
+```{r}
+
+sex_diff_norm_file = "/data/Wilson_Lab/projects/placenta_multiomics/valleywise_3samples/RRHO_other_datasets/dream_diffexpr_norm_femalemale_batchcorr.csv"
+sex_diff_norm_data = read.csv(sex_diff_norm_file)
+
+sex_diff_hyp_file = "/data/Wilson_Lab/projects/placenta_multiomics/valleywise_3samples/RRHO_other_datasets/dream_diffexpr_hyp_femalemale_batchcorr.csv"
+sex_diff_hyp_data = read.csv(sex_diff_hyp_file)
+
+```
+
+# Change in norm vs hyp
+
+```{r normhyp}
+
+male_hypnorm_file = "/data/Wilson_Lab/projects/placenta_multiomics/valleywise_3samples/RRHO_other_datasets/dream_diffexpr_male_hypnorm_batchcorr.csv"
+male_hypnorm_data = read.csv(male_hypnorm_file)
+male_hypnorm_data$logFC = -1 * male_hypnorm_data$logFC # fixed so that the orientation is hyp / norm
+
+female_hypnorm_file = "/data/Wilson_Lab/projects/placenta_multiomics/valleywise_3samples/RRHO_other_datasets/dream_diffexpr_female_hypnorm_batchcorr.csv"
+female_hypnorm_data = read.csv(female_hypnorm_file)
+female_hypnorm_data$logFC = -1 * female_hypnorm_data$logFC
+
+```
+
+# Get other data sets for comparison
+
+```{r others}
+
+Horii_male_hypnorm_data = read.csv("/data/Wilson_Lab/projects/placenta_multiomics/valleywise_3samples/RRHO_other_datasets/Horii/male_normhyp_DEG_dge_all_expressed_genes.csv")
+Horii_female_hypnorm_data = read.csv("/data/Wilson_Lab/projects/placenta_multiomics/valleywise_3samples/RRHO_other_datasets/Horii/female_normhyp_DEG_dge_all_expressed_genes.csv")
+
+Smith_male_hypnorm_data = read.csv("/data/Wilson_Lab/projects/placenta_multiomics/valleywise_3samples/RRHO_other_datasets/Smith/13293_2025_781_MOESM13_ESM_males.csv")
+Smith_female_hypnorm_data = read.csv("/data/Wilson_Lab/projects/placenta_multiomics/valleywise_3samples/RRHO_other_datasets/Smith/13293_2025_781_MOESM14_ESM_females.csv")
+
+Horii_norm_sexdiff_data = read.csv("/data/Wilson_Lab/projects/placenta_multiomics/valleywise_3samples/RRHO_other_datasets/Horii/norm_sexdiff_sgaCovar_DEG_all_expressed_genes.csv")
+Horii_hyp_sexdiff_data = read.csv("/data/Wilson_Lab/projects/placenta_multiomics/valleywise_3samples/RRHO_other_datasets/Horii/hyp_sexdiff_sgaCovar_DEG_all_expressed_genes.csv")
+
+Smith_norm_sexdiff_data = ""
+Smith_hyp_sexdiff_data = ""
+
+```
+
+# RRHO
+
+```{r normhyp}
+
+#  ------------------------- Norm/Ctrl vs Hyp/PE ---------------------------
+
+#  ------------------------- Valleywise vs Horii ---------------------------
+# use sign log p as score
+
+male_hypnorm_data$signlogp = ifelse(male_hypnorm_data$logFC >= 0, -log10(male_hypnorm_data$P.Value), log10(male_hypnorm_data$P.Value))
+female_hypnorm_data$signlogp = ifelse(female_hypnorm_data$logFC >= 0, -log10(female_hypnorm_data$P.Value), log10(female_hypnorm_data$P.Value))
+
+Horii_male_hypnorm_data$signlogp = ifelse(Horii_male_hypnorm_data$logFC >= 0, -log10(Horii_male_hypnorm_data$P.Value), log10(Horii_male_hypnorm_data$P.Value))
+Horii_female_hypnorm_data$signlogp = ifelse(Horii_female_hypnorm_data$logFC >= 0, -log10(Horii_female_hypnorm_data$P.Value), log10(Horii_female_hypnorm_data$P.Value))
+
+# RRHO map of gene symbols in both data sets
+
+#  ------- males -------
+overlapping_genes_male = intersect(male_hypnorm_data$genes, Horii_male_hypnorm_data$symbol)
+
+list1 = male_hypnorm_data[male_hypnorm_data$genes %in% overlapping_genes_male, colnames(male_hypnorm_data) %in% c("genes","signlogp")]
+colnames(list1) = c("symbol","signlogp")
+list1 =  list1[order(list1$signlogp, decreasing = TRUE), ]
+
+list2 = Horii_male_hypnorm_data[Horii_male_hypnorm_data$symbol %in% overlapping_genes_male, colnames(Horii_male_hypnorm_data) %in% c("symbol","signlogp")]
+list2 =  list2[order(abs(list2$signlogp), decreasing = TRUE), ] # collapse by abs signlogp
+list2 = list2[!duplicated(list2$symbol), ] # remove duplicate genes
+list2 =  list2[order(list2$signlogp, decreasing = TRUE), ]
+
+rrho_results = RRHO(
+    list1,
+    list2,
+    alternative = "enrichment",
+    stepsize = 100,
+    BY = TRUE,
+    plots = TRUE,
+    outputdir = "/data/Wilson_Lab/projects/placenta_multiomics/valleywise_3samples/RRHO_other_datasets/Horii/",
+    labels = c("Valleywise_male_normhyp", "Horii_male_ctrlPE")
+)
+
+merge_results = merge(list1,list2, by = "symbol")
+ggplot(merge_results, aes(x = signlogp.x, y = signlogp.y)) + 
+  geom_point() + 
+  xlab("Valleywise Norm vs Hyp in Male placenta (signlog p)") +
+  ylab("Horii Ctrl vs PE in Male placenta (signlog p)") +
+  theme_minimal()
+  
+#  ------- females -------
+overlapping_genes_female = intersect(female_hypnorm_data$genes, Horii_female_hypnorm_data$symbol)
+
+list1 = female_hypnorm_data[female_hypnorm_data$genes %in% overlapping_genes_female, colnames(female_hypnorm_data) %in% c("genes","signlogp")]
+colnames(list1) = c("symbol","signlogp")
+list1 =  list1[order(list1$signlogp, decreasing = TRUE), ]
+
+list2 = Horii_female_hypnorm_data[Horii_female_hypnorm_data$symbol %in% overlapping_genes_female, colnames(Horii_female_hypnorm_data) %in% c("symbol","signlogp")]
+list2 =  list2[order(abs(list2$signlogp), decreasing = TRUE), ] # collapse by abs signlogp
+list2 = list2[!duplicated(list2$symbol), ] # remove duplicate genes
+list2 =  list2[order(list2$signlogp, decreasing = TRUE), ]
+
+rrho_results = RRHO(
+    list1,
+    list2,
+    alternative = "enrichment",
+    stepsize = 100,
+    BY = TRUE,
+    plots = TRUE,
+    outputdir = "/data/Wilson_Lab/projects/placenta_multiomics/valleywise_3samples/RRHO_other_datasets/Horii/",
+    labels = c("Valleywise_female_normhyp", "Horii_female_ctrlPE")
+)
+
+merge_results = merge(list1,list2, by = "symbol")
+ggplot(merge_results, aes(x = signlogp.x, y = signlogp.y)) + 
+  geom_point() + 
+  xlab("Valleywise Norm vs Hyp in Female placenta (signlog p)") +
+  ylab("Horii Ctrl vs PE in Female placenta (signlog p)") +
+  theme_minimal()
+
+#  ------------------------- Valleywise vs Smith ---------------------------
+
+# use sign log p as score
+Smith_male_hypnorm_data$signlogp = ifelse(Smith_male_hypnorm_data$logFC >= 0, -log10(Smith_male_hypnorm_data$P.Value), log10(Smith_male_hypnorm_data$P.Value))
+Smith_female_hypnorm_data$signlogp = ifelse(Smith_female_hypnorm_data$logFC >= 0, -log10(Smith_female_hypnorm_data$P.Value), log10(Smith_female_hypnorm_data$P.Value))
+
+# RRHO map of gene symbols in both data sets
+
+#  ------- males -------
+overlapping_genes_male = intersect(male_hypnorm_data$genes, Smith_male_hypnorm_data$hgnc_symbol)
+
+list1 = male_hypnorm_data[male_hypnorm_data$genes %in% overlapping_genes_male, colnames(male_hypnorm_data) %in% c("genes","signlogp")]
+colnames(list1) = c("symbol","signlogp")
+list1 =  list1[order(list1$signlogp, decreasing = TRUE), ]
+
+list2 = Smith_male_hypnorm_data[Smith_male_hypnorm_data$hgnc_symbol %in% overlapping_genes_male, colnames(Smith_male_hypnorm_data) %in% c("hgnc_symbol","signlogp")]
+colnames(list2) = c("symbol","signlogp")
+# list2 = list2[order(abs(list2$signlogp), decreasing = TRUE), ] # collapse by abs signlogp
+# list2 = list2[!duplicated(list2$symbol), ] # remove duplicate genes
+list2 =  list2[order(list2$signlogp, decreasing = TRUE), ]
+
+rrho_results = RRHO(
+    list1,
+    list2,
+    alternative = "enrichment",
+    stepsize = 100,
+    BY = TRUE,
+    plots = TRUE,
+    outputdir = "/data/Wilson_Lab/projects/placenta_multiomics/valleywise_3samples/RRHO_other_datasets/Smith/",
+    labels = c("Valleywise_male_normhyp", "Smith_male_ctrlPE")
+)
+
+merge_results = merge(list1,list2, by = "symbol")
+ggplot(merge_results, aes(x = signlogp.x, y = signlogp.y)) + 
+  geom_point() + 
+  xlab("Valleywise Norm vs Hyp in Male placenta (signlog p)") +
+  ylab("Smith Ctrl vs PE in Male placenta (signlog p)") +
+  theme_minimal()
+
+#  ------- females -------
+overlapping_genes_female = intersect(female_hypnorm_data$genes, Smith_female_hypnorm_data$hgnc_symbol)
+
+list1 = female_hypnorm_data[female_hypnorm_data$genes %in% overlapping_genes_female, colnames(female_hypnorm_data) %in% c("genes","signlogp")]
+colnames(list1) = c("symbol","signlogp")
+list1 =  list1[order(list1$signlogp, decreasing = TRUE), ]
+
+list2 = Smith_female_hypnorm_data[Smith_female_hypnorm_data$hgnc_symbol %in% overlapping_genes_female, colnames(Smith_female_hypnorm_data) %in% c("hgnc_symbol","signlogp")]
+colnames(list2) = c("symbol","signlogp")
+list2 =  list2[order(abs(list2$signlogp), decreasing = TRUE), ] # collapse by abs signlogp
+list2 = list2[!duplicated(list2$symbol), ] # remove duplicate genes
+list2 =  list2[order(list2$signlogp, decreasing = TRUE), ]
+
+rrho_results = RRHO(
+    list1,
+    list2,
+    alternative = "enrichment",
+    stepsize = 100,
+    BY = TRUE,
+    plots = TRUE,
+    outputdir = "/data/Wilson_Lab/projects/placenta_multiomics/valleywise_3samples/RRHO_other_datasets/Smith/",
+    labels = c("Valleywise_female_normhyp", "Smith_female_ctrlPE")
+)
+
+merge_results = merge(list1,list2, by = "symbol")
+ggplot(merge_results, aes(x = signlogp.x, y = signlogp.y)) + 
+  geom_point() + 
+  xlab("Valleywise Norm vs Hyp in Female placenta (signlog p)") +
+  ylab("Smith Ctrl vs PE in Female placenta (signlog p)") +
+  theme_minimal()
+
+```
+
+
+# List all the packages used for future reference
+```{r SessionInfo}
+sessionInfo()
+```
+
