@@ -1,0 +1,302 @@
+---
+title: "Differential Proportions"
+author: "Seema Plaisier"
+date: "2025-12-4"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load CSV from CIBERSORTx
+
+After running CIBERSORTx, load the proportion results csv.  Create a meta data table to do comparisons.
+
+```{r input}
+
+input_directory = "C:/Users/plaisiersb/OneDrive - National Institutes of Health/Documents/Projects/Placenta/single_cell_deconvolution/Admati_2025/SingleNuc/filt80/"
+
+# read CIBERSORTx proportions
+proportion_data = read.csv(paste0(input_directory,"CIBERSORTx_Job61_Results.csv"), check.names = FALSE, row.names = 1)
+
+# check to see if any samples have high p-value 
+#   indicating that the correlation between that sample
+#   and the cell type signatures did not correlate well
+print(proportion_data[proportion_data$`P-value` > 0.1,])
+
+# remove the stats columns
+proportion_data$`P-value` = NULL
+proportion_data$Correlation = NULL
+proportion_data$RMSE = NULL
+
+# create meta data
+meta = data.frame(rownames(proportion_data))
+colnames(meta) = c("sample")
+meta["sex"] = ifelse(grepl("_XX", meta$sample, fixed = TRUE),"XX","XY")
+meta["placenta"] = sapply(strsplit(meta$sample, "_"), `[`, 1)
+meta["status"] = ifelse(grepl("HDP", meta$sample, fixed = TRUE),"HDP","Cont")
+meta["sex_status"] = paste(meta$sex, meta$status, sep = "_")
+colnames(meta) = c("sample","sex","placenta","status","sex_status")
+
+```
+
+# Differential proportions
+
+Figure out which cell types have different proportion based on sex and HDP status
+
+```{r diffproportion}
+
+library(tidyr)
+library(dplyr)
+
+# remove cell types for which there is none detected in any sample
+proportion_data = data.frame(proportion_data[, colSums(proportion_data) > 0])
+
+proportion_data$sample <- rownames(proportion_data)
+df <- merge(proportion_data, meta, by = "sample")
+
+df_long <- df %>%
+  pivot_longer(
+    cols = colnames(proportion_data)[colnames(proportion_data) != "sample"], 
+    names_to = "cell_type",
+    values_to = "proportion"
+  )
+
+df_long$prop_logit <- qlogis(pmin(pmax(df_long$proportion, 1e-6), 1-1e-6))
+
+library(lme4)
+library(lmerTest)   # gives p-values
+library(emmeans)
+
+cell_types <- unique(df_long$cell_type)
+
+results_sex <- lapply(cell_types, function(ct) {
+  
+  df_ct <- df_long %>% filter(cell_type == ct)
+  
+  fit <- lmer(prop_logit ~ sex + (1 | placenta), data = df_ct)
+  
+  out <- summary(fit)$coef
+  
+  # Extract row for sex effect
+  data.frame(
+    cell_type = ct,
+    estimate  = out["sexXY", "Estimate"],
+    p_value   = out["sexXY", "Pr(>|t|)"]
+  )
+})
+
+sex_results_df <- do.call(rbind, results_sex)
+sex_results_df = bind_rows(sex_results_df)
+write.csv(sex_results_df, paste0(input_directory,"compare_proportions_sex.csv"))
+#----------------
+results_status <- lapply(cell_types, function(ct) {
+  
+  df_ct <- df_long %>% filter(cell_type == ct)
+  
+  fit <- lmer(prop_logit ~ status + (1 | placenta), data = df_ct)
+  
+  out <- summary(fit)$coef
+  
+  # Extract row for sex effect
+  data.frame(
+    cell_type = ct,
+    estimate  = out["statusHDP", "Estimate"],
+    p_value   = out["statusHDP", "Pr(>|t|)"]
+  )
+})
+
+status_results_df <- do.call(rbind, results_status)
+status_results_df = bind_rows(status_results_df)
+write.csv(status_results_df, paste0(input_directory,"compare_proportions_status.csv"))
+#----------------
+results_sex_status <- lapply(cell_types, function(ct) {
+  df_ct <- df_long %>% filter(cell_type == ct)
+  
+  fit <- lmer(prop_logit ~ sex_status + (1 | placenta), data = df_ct)
+  
+  emm  <- emmeans(fit, ~ sex_status)
+  contr <- as.data.frame(pairs(emm, adjust = "fdr"))
+  
+  contr$cell_type <- ct
+  contr
+})
+
+sex_status_results_df <- do.call(rbind, results_sex_status)
+sex_status_results_df = bind_rows(sex_status_results_df)
+write.csv(sex_status_results_df, paste0(input_directory,"compare_proportions_sex_status.csv"))
+
+```
+
+# Plot
+
+Create a panel of violin jitters based on the different cell types
+
+```{r panels}
+
+pval_threshold = 0.05
+
+# install.packages("ggplot2")
+library(ggplot2)
+
+# between groups split on sex and hypertensive status
+sig_sex_status_celltypes = sex_status_results_df$cell_type[sex_status_results_df$p.value < pval_threshold]
+
+if (length(sig_sex_status_celltypes) >= 1) {
+  df_long_sexstatsig = df_long[df_long$cell_type %in% sig_sex_status_celltypes,]
+  ggplot(df_long_sexstatsig, aes(x = sex_status, y = proportion, fill = sex_status)) +
+    geom_violin(alpha = 0.5) +
+    scale_fill_manual(values = c("XY_Cont" = "lightblue", "XY_HDP" = "blue", "XX_Cont" = "gold","XX_HDP" = "orange")) +
+    geom_point(position = position_jitter(seed = 1, width = 0.2)) +
+    facet_wrap(~cell_type, scales = "free_y")
+  
+    ggsave(paste0(input_directory,"celltype_sex_status_sig",pval_threshold,".pdf"), height = 6, width = 8)
+}
+
+# between groups split on sex 
+
+sig_sex_celltypes = sex_results_df$cell_type[sex_results_df$p_value < pval_threshold]
+
+if (length(sig_sex_celltypes) >= 1) {
+  df_long_sexsig = df_long[df_long$cell_type %in% sig_sex_celltypes,]
+  ggplot(df_long_sexsig, aes(x = sex, y = proportion, fill = sex)) +
+    geom_violin(alpha = 0.5) +
+    geom_point(position = position_jitter(seed = 1, width = 0.2)) +
+    scale_fill_manual(values = c("XY" = "dodgerblue", "XX" = "darkgoldenrod1")) +
+    facet_wrap(~cell_type, scales = "free_y")
+  
+  ggsave(paste0(input_directory,"celltype_sex_sig",pval_threshold,".pdf"), height = 4, width = 8)
+}
+
+# between groups split on hypertensive status
+
+sig_status_celltypes = status_results_df$cell_type[status_results_df$p_value < pval_threshold]
+
+if (length(sig_status_celltypes) >= 1) {
+  df_long_statussig = df_long[df_long$cell_type %in% sig_status_celltypes,]
+  ggplot(df_long_statussig, aes(x = status, y = proportion, fill = status)) +
+    geom_violin(alpha = 0.5) +
+    geom_point(position = position_jitter(seed = 1, width = 0.2)) +
+    scale_fill_manual(values = c("Cont" = "darkgreen", "HDP" = "purple")) +
+    facet_wrap(~cell_type, scales = "free_y")
+  
+  ggsave(paste0(input_directory,"celltype_status_sig",pval_threshold,".pdf"), height = 4, width = 6)
+}
+
+
+```
+
+# Simple cell type proportion plot
+
+```{r largepanels}
+
+library(ggpubr)
+
+# all cell types
+df_long$placenta = factor(df_long$placenta, levels = unique(meta$placenta))
+df_long$sex_status = factor(df_long$sex_status, levels = c("XY_Cont", "XY_HDP", "XX_Cont","XX_HDP"))
+df_long$sex = factor(df_long$sex, levels = c("XY", "XX"))
+df_long$cell_type = factor(df_long$cell_type, levels = unique(df_long$cell_type))
+
+ggplot(df_long, aes(x = placenta, y = proportion, fill = sex_status)) +
+    geom_point(position = position_jitter(seed = 1, width = 0.2)) +
+    geom_violin(alpha = 0.5) +
+    scale_fill_manual(values = c("XY_Cont" = "lightblue", "XY_HDP" = "blue", "XX_Cont" = "gold","XX_HDP" = "orange")) +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+    facet_wrap(~cell_type, ncol = 6) 
+    # stat_compare_means(
+    #   method = "anova",
+    #   label = "p.format"
+    # )
+
+ggsave(paste0(input_directory,"cell_type_proportions.pdf"), height = 12, width = 20)
+
+# all cell types
+df_long$placenta = factor(df_long$placenta, levels = unique(meta$placenta))
+df_long$sex_status = factor(df_long$sex_status, levels = c("XY_Cont", "XY_HDP", "XX_Cont","XX_HDP"))
+df_long$sex = factor(df_long$sex, levels = c("XY", "XX"))
+df_long$cell_type = factor(df_long$cell_type, levels = unique(df_long$cell_type))
+
+ggplot(df_long, aes(x = placenta, y = proportion, fill = sex_status)) +
+    geom_point(position = position_jitter(seed = 1, width = 0.2)) +
+    geom_violin(alpha = 0.7) +
+    scale_fill_manual(values = c("XY_Cont" = "lightblue", "XY_HDP" = "blue", "XX_Cont" = "gold","XX_HDP" = "orange")) +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+    facet_wrap(~cell_type, scales = "free_y", ncol = 4) 
+    # stat_compare_means(
+    #   method = "anova",
+    #   label = "p.format"
+    # )
+ggsave(paste0(input_directory,"cell_type_proportions_individual_scales.pdf"), height = 11, width = 20)
+
+# separate cell types with high and low expression
+
+ct_mean = df_long %>%
+  group_by(placenta, cell_type) %>%
+  summarise(mean_prop = mean(proportion), .groups = "drop")
+ct_mean = ct_mean %>%
+  mutate(high_prop = mean_prop >= 0.2)
+df_flagged <- df_long %>%
+  left_join(ct_mean, by = c("placenta", "cell_type"))
+
+mean_df <- df_long %>%
+  group_by(cell_type) %>%
+  summarise(
+    mean_prop = mean(proportion),
+    y_max     = max(proportion),
+    .groups   = "drop"
+  ) %>%
+  mutate(
+    mean_label = paste0("mean = ", signif(mean_prop, 3)),
+    y_mean     = y_max * 1.05   # a little above the data
+  )
+
+df_high  <- df_long[df_long$cell_type %in% unique(df_flagged$cell_type[df_flagged$high_prop]),]
+
+df_high$placenta = factor(df_high$placenta, levels = unique(meta$placenta))
+df_high$sex_status = factor(df_high$sex_status, levels = c("XY_Cont", "XY_HDP", "XX_Cont","XX_HDP"))
+df_high$sex = factor(df_high$sex, levels = c("XY", "XX"))
+df_high$cell_type = factor(df_high$cell_type, levels = unique(df_high$cell_type))
+
+ggplot(df_high, aes(x = placenta, y = proportion, fill = sex_status)) +
+    geom_point(position = position_jitter(seed = 1, width = 0.2)) +
+    geom_violin(alpha = 0.7) +
+    scale_fill_manual(values = c("XY_Cont" = "lightblue", "XY_HDP" = "blue", "XX_Cont" = "gold","XX_HDP" = "orange")) +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+    facet_wrap(~cell_type, ncol = 6) 
+    #stat_compare_means(
+    #  method = "anova",
+    #  label = "p.format"
+    #)
+
+ggsave(paste0(input_directory,"cell_type_proportions_highprop.pdf"), height = 4, width = 8)
+
+df_low  <- df_long[df_long$cell_type %in% unique(df_flagged$cell_type[!df_flagged$high_prop]),]
+
+df_low$placenta = factor(df_low$placenta, levels = unique(meta$placenta))
+df_low$sex_status = factor(df_low$sex_status, levels = c("XY_Cont", "XY_HDP", "XX_Cont","XX_HDP"))
+df_low$sex = factor(df_low$sex, levels = c("XY", "XX"))
+df_low$cell_type = factor(df_low$cell_type, levels = unique(df_low$cell_type))
+
+ggplot(df_low, aes(x = placenta, y = proportion, fill = sex_status)) +
+    geom_point(position = position_jitter(seed = 1, width = 0.2)) +
+    geom_violin(alpha = 0.7) +
+    scale_fill_manual(values = c("XY_Cont" = "lightblue", "XY_HDP" = "blue", "XX_Cont" = "gold","XX_HDP" = "orange")) +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+    facet_wrap(~cell_type, ncol = 6) 
+    # stat_compare_means(
+    #   method = "anova",
+    #   label = "p.format"
+    # )
+
+ggsave(paste0(input_directory,"cell_type_proportions_lowprop.pdf"), height = 10, width = 16)
+
+```
+
+
+# Session info
+```{r}
+sessionInfo()
+```
+
