@@ -44,6 +44,7 @@ library(UpSetR)
 library(corrplot)
 library(BiocParallel)
 library(e1071) 
+library(dendextend)
 
 ```
 
@@ -158,52 +159,300 @@ ggsave(paste0(output_directory, "scatter_sexdiff_norm_hyp.pdf"))
 
 This creates box plots that show the expression of specific genes in each of the 4 placenta sample groups: male placentas from normotensive pregnancies, female placentas from normotensive pregnancies, male placentas from hypertensive pregnancies, and female placentas from hypertensive pregnancies.
 
-Genes visualized were chosen based on significant differnetial expression, which in this case is defined as adjusted p-value < 0.05 using limma-voom for differential expression after accounting for multiregional sampling.
+Genes visualized were chosen based on significant differential expression, which in this case is defined as adjusted p-value < 0.05 using limma-voom for differential expression after accounting for multiregional sampling.
 
-The first plot shows autosomal genes that showed significant differential expression between male and female placentas in normotensive pregnancies, hypertensive pregnancies, or both. 
+Genes plotted include: 
 
-The second plot shows genes that showed genes differentially expressed between placentas from normotensive versus hypertensive pregnancies, in females, males, or both.
+1) Autosomal genes that showed significant differential expression between male and female placentas in normotensive pregnancies, hypertensive pregnancies, or both. 
 
-```{r sig_gene_boxplots}
+2) Genes that showed genes differentially expressed between placentas from normotensive versus hypertensive pregnancies, in females, males, or both.
+
+3) Genes with particularly high or low intraplacental variance
+
+```{r plot_genes_sex}
+
+genes_to_plot = c("PCP4L1","DDX55", "PDGFA","DGCR8","TAOK2","PRRG2","HMG20B", "IQSEC3", "EIF1AXP1")
+
+# load expression data
+lcpm_norm_batchcorrect_data = read.csv("C:/Users/plaisiersb/OneDrive - National Institutes of Health/Documents/Projects/Placenta/HG38/Correct_BatchCovariate/lcpm_norm_batchcorrected.csv")
+
+# create pheno data frame
+
+pheno = data.frame(colnames(lcpm_norm_batchcorrect_data)[-1])
+colnames(pheno) = c("sample")
+pheno$sex = ifelse(grepl("XY",pheno$sample, fixed = TRUE),"male","female")
+pheno$status = ifelse(grepl("Cont",pheno$sample, fixed = TRUE),"normotensive","hypertensive")
+pheno$placenta = str_split(pheno$sample, "_", simplify = TRUE)[, 1]
+pheno$quadrant = str_split(pheno$sample, "_", simplify = TRUE)[, 2]
+pheno$sex_status = paste0(pheno$sex, "_", pheno$status)
+
+# create placenta level pheno file for merging later
+pheno_placenta = pheno
+pheno_placenta$sample = NULL
+pheno_placenta$quadrant = NULL
+pheno_placenta = pheno_placenta[!duplicated(pheno_placenta$placenta), ]
+
+# filter for genes to plot
+gene_data = lcpm_norm_batchcorrect_data[lcpm_norm_batchcorrect_data$gene %in% genes_to_plot,]
+gene_data_long = melt(gene_data)
+colnames(gene_data_long) = c("gene","sample","expression")
+gene_data_long = merge(gene_data_long, pheno, by = "sample")
+
+# sample order with normotensives and hypertesnives together
+norm_samples = unique(pheno$placenta[grepl("Cont",pheno$placenta, fixed = TRUE)])
+hyp_samples = unique(pheno$placenta[grepl("HDP",pheno$placenta, fixed = TRUE)])
+placenta_order = c(norm_samples, hyp_samples)
+
+gene_data_long$gene = factor(gene_data_long$gene, levels = genes_to_plot)
+gene_data_long$placenta = factor(gene_data_long$placenta, levels = placenta_order)
+gene_data_long$sex_status = factor(gene_data_long$sex_status, levels = c("male_normotensive", "female_normotensive","male_hypertensive", "female_hypertensive"))
+
+ggplot(gene_data_long, aes(x = placenta, y = expression, fill = sex_status, color = sex_status, group = sex_status)) + 
+  geom_jitter(alpha  = 0.75, width = 0.2) +
+  geom_boxplot(alpha  = 0.75) +
+  scale_fill_manual(values = c("lightblue", "gold","blue", "orange")) +
+  scale_color_manual(values = c("lightblue", "gold","blue", "orange")) +
+  ylab("normalized gene expression") + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(size = 6,angle = 90, vjust = 0.5, hjust = 1)) +
+  facet_wrap(~gene, scales = "free_y")
 
 ```
 
-# plot genes of interest
+```{r plot_genes_hyp}
 
-```{r plot_genes, eval=FALSE, include=FALSE}
+genes_to_plot = c("STK10","SFXN3","SH3PXD2A","GABRB1")
 
-genes_to_plot = c("PCP4L1","PDGFA","AC084026.1")
-
+# load expression data
 lcpm_norm_batchcorrect_data = read.csv("C:/Users/plaisiersb/OneDrive - National Institutes of Health/Documents/Projects/Placenta/HG38/Correct_BatchCovariate/lcpm_norm_batchcorrected.csv")
 
+pheno = data.frame(colnames(lcpm_norm_batchcorrect_data)[-1])
+colnames(pheno) = c("sample")
+pheno$sex = ifelse(grepl("XY",pheno$sample, fixed = TRUE),"male","female")
+pheno$status = ifelse(grepl("Cont",pheno$sample, fixed = TRUE),"normotensive","hypertensive")
+pheno$placenta = str_split(pheno$sample, "_", simplify = TRUE)[, 1]
+pheno$quadrant = str_split(pheno$sample, "_", simplify = TRUE)[, 2]
+pheno$sex_status = paste0(pheno$sex, "_", pheno$status)
+
+# filter for genes to plot
+gene_data = lcpm_norm_batchcorrect_data[lcpm_norm_batchcorrect_data$gene %in% genes_to_plot,]
+gene_data_long = melt(gene_data)
+colnames(gene_data_long) = c("gene","sample","expression")
+gene_data_long = merge(gene_data_long, pheno, by = "sample")
+
+# sample order with males and females together
+male_samples = unique(pheno$placenta[grepl("XY",pheno$sample, fixed = TRUE)])
+female_samples = unique(pheno$placenta[grepl("XX",pheno$sample, fixed = TRUE)])
+placenta_order = c(male_samples, female_samples)
+
+gene_data_long$gene = factor(gene_data_long$gene, levels = genes_to_plot)
+gene_data_long$placenta = factor(gene_data_long$placenta, levels = placenta_order)
+gene_data_long$sex = factor(gene_data_long$sex, levels = c("male","female", "female_hypertensive"))
+gene_data_long$sex_status = factor(gene_data_long$sex_status, levels = c("male_normotensive", "male_hypertensive", "female_normotensive", "female_hypertensive"))
+
+ggplot(gene_data_long, aes(x = placenta, y = expression, fill = sex_status, color = sex_status, group = sex_status)) + 
+  geom_jitter(alpha  = 0.75, width = 0.2) +
+  geom_boxplot(alpha  = 0.75) +
+  scale_fill_manual(values = c("lightblue", "blue", "gold", "orange")) +
+  scale_color_manual(values = c("lightblue", "blue", "gold", "orange")) +
+  ylab("normalized gene expression") + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(size = 6,angle = 90, vjust = 0.5, hjust = 1)) +
+  facet_wrap(~gene, scales = "free_y", ncol = 3)
+
+```
+
+
+```{r plot_genes_var}
+
+# enrichment result genes to plot
+genes_to_plot = c("H19", "IGFBP1", "DLG5", "NEK9", "TBRG1","HNRNPU")
+#genes_to_plot = c("H19", "IGFBP1", "DLG5", "NEK9", "PSMA6P1","TMSB4Y")
+gene_list_tag = "HighLow_variance"
+
+gene_expr_long = data.frame(matrix(ncol = 8, nrow = 0))
+colnames(gene_expr_long) = c("sample","gene","expression", "sex", "status", "placenta", "quadrant", "sex_status")
+
+# filter for genes of interest
 for (selected_gene in genes_to_plot) {
-  if (! selected_gene %in% lcpm_norm_batchcorrect_data$gene) {  print (paste(selected_gene, "not in dataset"))}
+  
+  if (! selected_gene %in% lcpm_norm_batchcorrect_data$gene) {  
+    print (paste(selected_gene, "not in dataset"))
+  }
   
   gene_expr = lcpm_norm_batchcorrect_data[lcpm_norm_batchcorrect_data$gene == selected_gene,]
-  gene_expr_long = melt(gene_expr)
-  colnames(gene_expr_long) = c("gene","sample","expression")
-  gene_expr_long = merge(gene_expr_long, pheno, by = "sample")
+  gene_expr_long_selected = melt(gene_expr)
+  colnames(gene_expr_long_selected) = c("gene","sample","expression")
+  gene_expr_long_selected = merge(gene_expr_long_selected, pheno, by = "sample")
   
-  # plot gene expression in 4 groups
-  #gene_expr_long$sex_status = factor(gene_expr_long$sex_status, levels = c("male_normotensive", "male_hypertensive", "female_normotensive","female_hypertensive"))
-  gene_expr_long$sex_status = factor(gene_expr_long$sex_status, levels = c("male_normotensive",  "female_normotensive","male_hypertensive", "female_hypertensive"))
-  gene_expr_long$placenta = factor(gene_expr_long$placenta, levels = unique(pheno$placenta))
-  gene_expr_long$sample = factor(gene_expr_long$sample, levels = pheno$sample)
+  gene_expr_long = rbind(gene_expr_long, gene_expr_long_selected)
   
-  plot = ggplot(gene_expr_long, aes(x = placenta, y = expression, color = sex_status, group = sex_status, fill = sex_status)) + 
-    geom_jitter(alpha  = 0.75, width = 0.2) +
-    geom_boxplot(alpha  = 0.75) +
-    scale_color_manual(values = c("lightblue", "blue","gold", "orange")) +
-    scale_fill_manual(values = c("lightblue", "blue","gold", "orange")) +
-    ggtitle(selected_gene) +
-    theme_minimal() +
-    theme(axis.text.x = element_text(size = 6, angle = 90, vjust = 1, hjust = 1)) 
-  print(plot)
+}
+
+# plot gene expression in 4 groups
+gene_expr_long$sex_status = factor(gene_expr_long$sex_status, levels = c("male_normotensive", "male_hypertensive", "female_normotensive","female_hypertensive"))
+gene_expr_long$placenta = factor(gene_expr_long$placenta, levels = unique(pheno$placenta))
+gene_expr_long$sample = factor(gene_expr_long$sample, levels = pheno$sample)
+gene_expr_long$gene = factor(gene_expr_long$gene, levels = genes_to_plot)
+
+plot = ggplot(gene_expr_long, aes(x = placenta, y = expression, color = sex_status, group = sex_status, fill = sex_status)) + 
+  geom_jitter(alpha  = 0.75, width = 0.2) +
+  geom_boxplot(alpha  = 0.75) +
+  scale_color_manual(values = c("lightblue", "blue","gold", "orange")) +
+  scale_fill_manual(values = c("lightblue", "blue","gold", "orange")) +
+  ylim(-5, 15) +
+  ylab("normalized expression (log2-transformed CPM") +
+  facet_wrap(~gene, ncol = 3) +
+  theme_minimal() +
+  theme(legend.position = "bottom", axis.text.x = element_text(size = 6, angle = 90, vjust = 1, hjust = 1)) 
+print(plot)
+ggsave(plot = plot, filename = paste0(output_directory, "expr_plot_", gene_list_tag,".pdf"))
+  
+```
+
+# Gene expression patterns with pvalue < 0.01 genes
+```{r gene_patterns}
+
+# pvalue threshold for significance in at least one profile
+#   (between at least 2 groups)
+min_pval_threshold = 0.01
+num_clusters = 6
+
+files = list.files("C:/Users/plaisiersb/OneDrive - National Institutes of Health/Documents/Projects/Placenta/HG38/Correct_BatchCovariate/")
+DE_files = files[grepl("dream_",files, fixed = TRUE) & grepl("_batchcorr.csv",files, fixed = TRUE)]
+
+sig_genes = c()
+for (DE_file in DE_files) {
+  file_data = read.csv(paste0(input_directory, DE_file), header = TRUE, check.names = FALSE)
+  all_genes = file_data$genes[file_data$P.Value < 0.01]
+  sig_genes = c(sig_genes, all_genes)
+}
+sig_genes = unique(sig_genes)
+
+filter_expr = lcpm_norm_batchcorrect_data[lcpm_norm_batchcorrect_data$gene %in% sig_genes,]
+rownames(filter_expr) = filter_expr$gene
+filter_expr$gene = NULL
+
+# take mean of all quadrants/
+placentas = unique(pheno$placenta)
+
+expr_avg = sapply(placentas, function(id) {
+  cols = pheno$sample[pheno$placenta == id]
+  rowMeans(filter_expr[, cols, drop = FALSE], na.rm = TRUE)
+})
+
+col_annot = pheno_placenta
+rownames(col_annot) = pheno_placenta$placenta
+col_annot$placenta = NULL
+col_annot$sex_status = NULL
+
+colors_annot = list(
+  sex = c("male" = "blue","female" = "orange"),
+  status = c("normotensive" = "green", "hypertensive" = "purple")
+)
+
+ph = pheatmap::pheatmap(as.matrix(expr_avg), scale = "row", fontsize_col = 4, cluster_cols = FALSE, show_rownames = FALSE, color = colorRampPalette(c("blue", "white", "red"))(100), annotation_col = col_annot, annotation_colors = colors_annot)
+
+row_clusters = cutree(ph$tree_row, k = num_clusters)
+
+table(row_clusters)
+write.csv(data.frame(row_clusters), file = paste0(output_directory,"heatmap_clusters_pv01_",num_clusters,".csv"))
+
+cluster_means = t(sapply(1:num_clusters, function(cl) {
+  rows = names(row_clusters)[row_clusters == cl]
+  colMeans(expr_avg[rows, , drop = FALSE], na.rm = TRUE)
+}))
+
+rownames(cluster_means) = paste0("Cluster_", 1:num_clusters)
+
+plot_df = as.data.frame(cluster_means) %>%
+  mutate(cluster = rownames(cluster_means)) %>%
+  pivot_longer(
+    cols = -cluster,
+    names_to = "sample",
+    values_to = "mean_value"
+  )
+
+plot_df$sample = factor(plot_df$sample, levels = colnames(expr_avg))
+plot_df$sex_status = pheno_placenta$sex_status[match(plot_df$sample, pheno_placenta$placenta)]
+plot_df$sex_status = factor(plot_df$sex_status, levels = c("male_normotensive","male_hypertensive", "female_normotensive", "female_hypertensive"))
+
+ggplot(plot_df, aes(x = sex_status, y = mean_value, group = cluster, color = sex_status)) +
+  geom_jitter(size = 2, width = 0.15) +
+  scale_color_manual(values = c("lightblue", "blue","gold", "orange")) +
+  facet_wrap(~cluster, scales = "free_y") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+row_annot = data.frame(rownames(expr_avg))
+colnames(row_annot) = c("gene")
+row_annot$cluster = row_clusters[row_annot$gene]
+row_annot$cluster = paste0("Cluster_",row_annot$cluster)
+rownames(row_annot) = row_annot$gene
+row_annot$gene = NULL
+
+cluster_cols = grDevices::hcl.colors(
+  num_clusters,
+  palette = "Pastel 1"
+)
+names(cluster_cols) = unique(row_annot$cluster)
+
+colors_annot = list(
+  sex = c("male" = "blue","female" = "orange"),
+  status = c("normotensive" = "green", "hypertensive" = "purple"),
+  cluster = cluster_cols
+)
+
+pheatmap(as.matrix(expr_avg), scale = "row", fontsize_col = 6, cluster_cols = FALSE, show_rownames = FALSE, color = colorRampPalette(c("blue", "white", "red"))(100), annotation_col = col_annot, annotation_row = row_annot, annotation_colors = colors_annot)
+
+# What clusters are PE markers in?
+
+placenta_PE_genes = read.csv("C:/Users/plaisiersb/OneDrive - National Institutes of Health/Documents/Projects/Placenta/HG38/placenta_markers.csv", check.names = FALSE, header = TRUE)
+
+row_annot = data.frame(row_annot)
+row_annot$gene = rownames(row_annot)
+placenta_PE_clusters = row_annot[rownames(row_annot) %in% placenta_PE_genes$`Gene symbol`,]
+table(placenta_PE_clusters)
+
+# functional enrichment of cluster genes
+
+for (cluster_number in 1:num_clusters) {
+  gene_list = names(row_clusters[row_clusters == cluster_number])
+  
+  all_convert = mapIds(org.Hs.eg.db,
+                  keys = gene_list,
+                  keytype = "SYMBOL",
+                  column = "ENTREZID",
+                  multiVals = "first")
+  
+  all = na.omit(unname(all_convert)) 
+   
+  bp = enrichGO(
+    gene          = all,
+    OrgDb         = org.Hs.eg.db,
+    keyType       = "ENTREZID",
+    ont           = "BP",
+    pAdjustMethod = "BH",
+    pvalueCutoff  = 0.1,
+    qvalueCutoff  = 0.1,
+    readable      = TRUE
+  )
+  
+  print(dotplot(bp, showCategory = 30) + ggtitle("High residual variance - GO BP enrichment") + theme(axis.text.y = element_text(size = 6)) + ggtitle(paste0("Cluster ", cluster_number)))
+  
+  df = bp@result[bp@result$p.adjust < 0.1,]
+  if (nrow(df) > 1) {
+    bp_readable = setReadable(bp, 'org.Hs.eg.db', 'ENTREZID')
+    print(cnetplot(bp_readable) + ggtitle(paste0("Cluster ", cluster_number)))
+  }
 }
 
 ```
 
+
 # Gene Set Enrichment Analysis 
+
+This shows how we did gene set enrichment analysis using differential expression
 
 ```{r gsea}
 
