@@ -45,6 +45,7 @@ library(corrplot)
 library(BiocParallel)
 library(e1071) 
 library(dendextend)
+library(ggVennDiagram)
 
 ```
 
@@ -66,6 +67,8 @@ male_normhyp_data$z.std = -1 * male_normhyp_data$z.std
 female_normhyp_data$logFC = -1 * female_normhyp_data$logFC
 female_normhyp_data$t = -1 * female_normhyp_data$t
 female_normhyp_data$z.std = -1 * female_normhyp_data$z.std
+
+all_normhyp_data = read.csv(paste0(input_directory,"dream_diffexpr_hypnorm_all_batchcorr.csv"), check.names = FALSE)
 
 norm_femalemale_data = read.csv(paste0(input_directory,"dream_diffexpr_norm_femalemale_batchcorr.csv"), check.names = FALSE)
 hyp_femalemale_data = read.csv(paste0(input_directory,"dream_diffexpr_hyp_femalemale_batchcorr.csv"), check.names = FALSE)
@@ -114,7 +117,7 @@ ggplot(merged_data, aes(x = logFC.x, y = logFC.y, color = sig, alpha = sig)) +
   ) +
   theme_minimal()
 ggsave(paste0(output_directory, "scatter_malehyp_femalehyp.pdf"))
-
+cor.test(merged_data$logFC.x,merged_data$logFC.y)
 
 # ------- sex diff in norm vs hyp -------
 
@@ -152,6 +155,37 @@ ggplot(merged_data, aes(x = logFC.x, y = logFC.y, color = sig, alpha = sig)) +
   ) +
   theme_minimal()
 ggsave(paste0(output_directory, "scatter_sexdiff_norm_hyp.pdf"))
+cor.test(merged_data$logFC.x,merged_data$logFC.y)
+
+# plot with just autosomal genes
+
+gene_info_table = read.csv("C:/Users/plaisiersb/OneDrive - National Institutes of Health/Documents/Projects/UCSC_Table_Browser/name_chromosome.csv", header = FALSE)
+colnames(gene_info_table) = c("name","chr")
+
+sex_chr_genes = gene_info_table$name[gene_info_table$chr == "chrX" | gene_info_table$chr == "chrY"]
+
+merged_data = merged_data[! merged_data$genes %in% sex_chr_genes,]
+merged_data_label = merged_data %>%
+  group_by(sig) %>%
+  slice_max(order_by = abs(logFC.x), n = 10, with_ties = FALSE) %>%
+  ungroup()
+
+ggplot(merged_data, aes(x = logFC.x, y = logFC.y, color = sig, alpha = sig)) +
+  geom_point() +
+  #xlim(-5,5) +
+  #ylim(-5,5)  +
+  #scale_color_manual(values = c("both_sig" = "red", "sig_norm" = "green","sig_hyp" = "purple", "not" = "grey")) +
+  #scale_alpha_manual(values = c("both_sig" = 0.9, "sig_norm" = 0.9,"sig_hyp" = 0.9, "not" = 0.3)) +
+  scale_color_manual(values = c("both_sig" = "red", "both_nom_sig" = "pink", "sig_norm" = "forestgreen", "nom_sig_norm" = "lightgreen", "sig_hyp" = "purple", "nom_sig_hyp" = "lavender", "not" = "grey")) +
+  scale_alpha_manual(values = c("both_sig" = 0.9, "both_nom_sig" = 0.7, "sig_norm" = 0.9, "nom_sig_norm" = 0.7, "sig_hyp" = 0.9, "nom_sig_hyp" = 0.7, "not" = 0.3)) +
+  geom_text_repel(
+    data = merged_data_label,
+    aes(label = genes),
+    max.overlaps = Inf
+  ) +
+  theme_minimal()
+ggsave(paste0(output_directory, "scatter_sexdiff_norm_hyp_autosomal.pdf"))
+cor.test(merged_data$logFC.x,merged_data$logFC.y)
 
 ```
 
@@ -169,9 +203,11 @@ Genes plotted include:
 
 3) Genes with particularly high or low intraplacental variance
 
+4) Gene sets that are significantly enriched
+
 ```{r plot_genes_sex}
 
-genes_to_plot = c("PCP4L1","DDX55", "PDGFA","DGCR8","TAOK2","PRRG2","HMG20B", "IQSEC3", "EIF1AXP1")
+genes_to_plot = c("PDGFA", "DDX55", "PCP4L1", "DGCR8","TAOK2","PRRG2","HMG20B", "EIF1AXP1", "IQSEC3")
 
 # load expression data
 lcpm_norm_batchcorrect_data = read.csv("C:/Users/plaisiersb/OneDrive - National Institutes of Health/Documents/Projects/Placenta/HG38/Correct_BatchCovariate/lcpm_norm_batchcorrected.csv")
@@ -216,6 +252,8 @@ ggplot(gene_data_long, aes(x = placenta, y = expression, fill = sex_status, colo
   theme_minimal() +
   theme(axis.text.x = element_text(size = 6,angle = 90, vjust = 0.5, hjust = 1)) +
   facet_wrap(~gene, scales = "free_y")
+ggsave(paste0(output_directory, "expr_plot_sexdiff.pdf"))
+
 
 ```
 
@@ -259,6 +297,8 @@ ggplot(gene_data_long, aes(x = placenta, y = expression, fill = sex_status, colo
   theme_minimal() +
   theme(axis.text.x = element_text(size = 6,angle = 90, vjust = 0.5, hjust = 1)) +
   facet_wrap(~gene, scales = "free_y", ncol = 3)
+
+ggsave(paste0(output_directory, "expr_plot_normhyp.pdf"))
 
 ```
 
@@ -310,6 +350,66 @@ ggsave(plot = plot, filename = paste0(output_directory, "expr_plot_", gene_list_
   
 ```
 
+```{r plot_genes_enriched}
+
+genes_to_plot_ribosome = c("RPS4Y1","RPL13A","RPS11","RPS3A","RPS20","RPL37A","RPL35A","RPS12","RPS23","RPL8","RPL41","RPLP2","RPS5","RPL28","RPS6","RPL32","RPL18A","RPL3","RPL15","RPL13","RPL10A","RPLP1","RPL19","RPL34","RPL35","RPS21","RPL37","RPL27","RPL30","RPS24","RPL14","RPS19","RPL36","RPL18","FAU","RPS29","RPL24","RPL27A","RPS8","RPL23","RPS27A","RPL29","RPS16","UBA52","RPL11","RPL6","RPL5","RPLP0","RPL31","RPL38","RPS15","RPL36AL","RPS27","RPL23A","RPL17","RPSA","RPS7","RPL21","RPL10","RPS3","RPS15A")
+
+genes_to_plot_cellcycle = c("SMC1A","ATR","CDC27","ANAPC7","YWHAZ","RBL1","TGFB3","STAG2","CCNA2","GSK3B","PTTG1","SMAD2","FZR1","ANAPC4","HDAC1","TTK","DBF4","ORC5","ORC4","ANAPC10","CDC45","CCNH","MAD2L2","MCM4","CDK1","TGFB2","ORC1","ESPL1","BUB1B","BUB1","CDK7","STAG1","SMAD4","SMC3","SKP1","EP300","PRKDC","ANAPC1","CHEK1","CDC20","PLK1","YWHAB","SFN","PCNA","CDKN2B","BUB3")
+
+genes_to_plot_macroautophagy = c("TP53INP1","TBC1D25","MTMR3","ZFYVE1","GABARAPL1","NPC1","TMEM41B","MAP1LC3B2","CSNK2A2","ZFYVE26","ATG9A","DDRGK1","RETREG3","PINK1","VPS37B","PIP4K2A","ATG101","GSK3A","SESN3","CHMP2A","MTMR14","ARHGAP26","USP30","ULK1",'EXOC8',"TEX264","WAC","AP4M1","ERN1","CHMP4C","MFN2","CHMP4B","WDR45B","MAP1LC3B","RAB1B","WIPI2","SUPT5H","ATG4B","ATG13",'AP5Z1','ATP6V0D1','TSG101','WDR45','RAB3GAP1','ATP6V0A1','SNAP47',"RETREG2","WDR24","ATG2A","SLC25A4","YOD1","CALM1","PIK3C2B","ATP6V0B","SIRT1","KAT5","TBK1","RBX1","RUBCN","PIP4K2C","ATG2B","STX4","UBQLN4","EPG5","TOM1","MTM1","IRGQ","ATP6V1C1","HSPB8","TMEM39A","UBXN6","HGS","SPART","SREBF1","LYPLA1","CLEC16A","UBE2A","SMURF1","ATP6V0C","RIPK2","VTA1","RAB7A","UFL1","PHF23","SPTLC1","WDFY3","LGALS8","RAB43","RB1CC1","VTI1A","ZNRF1","BECN1","ARL8B","GAA","DELE1","VPS4B","NBR1","FKBP8","ATP13A2","BNIP3L","MCOLN1","ARFIP2","AUP1","SEC62","MUL1","LRSAM1","EMC6","STBD1","RHEB","RAB1A","EIF2AK1","RAB5A","UFM1","LAMP2","PSEN1","CHMP6","MAP3K7","VPS13D","HUWE1","SESN1","SREBF2","NSFL1C","BAG3","CDK5RAP3","FZD5","ATG9B","CHMP2B","VAMP8","CDK5R1","VPS28","AMBRA1","EI24")
+
+genes_to_plot = genes_to_plot_macroautophagy
+tag = "macroautophagy"
+desired_height = 15
+desired_width = 15
+
+# load expression data
+lcpm_norm_batchcorrect_data = read.csv("C:/Users/plaisiersb/OneDrive - National Institutes of Health/Documents/Projects/Placenta/HG38/Correct_BatchCovariate/lcpm_norm_batchcorrected.csv")
+
+# create pheno data frame
+
+pheno = data.frame(colnames(lcpm_norm_batchcorrect_data)[-1])
+colnames(pheno) = c("sample")
+pheno$sex = ifelse(grepl("XY",pheno$sample, fixed = TRUE),"male","female")
+pheno$status = ifelse(grepl("Cont",pheno$sample, fixed = TRUE),"normotensive","hypertensive")
+pheno$placenta = str_split(pheno$sample, "_", simplify = TRUE)[, 1]
+pheno$quadrant = str_split(pheno$sample, "_", simplify = TRUE)[, 2]
+pheno$sex_status = paste0(pheno$sex, "_", pheno$status)
+
+# create placenta level pheno file for merging later
+pheno_placenta = pheno
+pheno_placenta$sample = NULL
+pheno_placenta$quadrant = NULL
+pheno_placenta = pheno_placenta[!duplicated(pheno_placenta$placenta), ]
+
+# filter for genes to plot
+gene_data = lcpm_norm_batchcorrect_data[lcpm_norm_batchcorrect_data$gene %in% genes_to_plot,]
+gene_data_long = melt(gene_data)
+colnames(gene_data_long) = c("gene","sample","expression")
+gene_data_long = merge(gene_data_long, pheno, by = "sample")
+
+# sample order with normotensives and hypertesnives together
+norm_samples = unique(pheno$placenta[grepl("Cont",pheno$placenta, fixed = TRUE)])
+hyp_samples = unique(pheno$placenta[grepl("HDP",pheno$placenta, fixed = TRUE)])
+placenta_order = c(norm_samples, hyp_samples)
+
+gene_data_long$gene = factor(gene_data_long$gene, levels = genes_to_plot)
+gene_data_long$placenta = factor(gene_data_long$placenta, levels = placenta_order)
+gene_data_long$sex_status = factor(gene_data_long$sex_status, levels = c("male_normotensive", "female_normotensive","male_hypertensive", "female_hypertensive"))
+
+ggplot(gene_data_long, aes(x = placenta, y = expression, fill = sex_status, color = sex_status, group = sex_status)) + 
+  geom_jitter(alpha  = 0.75, width = 0.2) +
+  geom_boxplot(alpha  = 0.75) +
+  scale_fill_manual(values = c("lightblue", "gold","blue", "orange")) +
+  scale_color_manual(values = c("lightblue", "gold","blue", "orange")) +
+  ylab("normalized gene expression") + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(size = 6,angle = 90, vjust = 0.5, hjust = 1)) +
+  facet_wrap(~gene, scales = "free_y")
+ggsave(paste0(output_directory, "expr_plot_",tag,".pdf"), height = desired_height, width = desired_width)
+
+
+```
 # Gene expression patterns with pvalue < 0.01 genes
 ```{r gene_patterns}
 
@@ -320,10 +420,11 @@ num_clusters = 6
 
 files = list.files("C:/Users/plaisiersb/OneDrive - National Institutes of Health/Documents/Projects/Placenta/HG38/Correct_BatchCovariate/")
 DE_files = files[grepl("dream_",files, fixed = TRUE) & grepl("_batchcorr.csv",files, fixed = TRUE)]
+DE_files = DE_files[!grepl("all", DE_files, fixed = TRUE)]
 
 sig_genes = c()
 for (DE_file in DE_files) {
-  file_data = read.csv(paste0(input_directory, DE_file), header = TRUE, check.names = FALSE)
+  file_data = read.csv(paste0("C:/Users/plaisiersb/OneDrive - National Institutes of Health/Documents/Projects/Placenta/HG38/Correct_BatchCovariate/", DE_file), header = TRUE, check.names = FALSE)
   all_genes = file_data$genes[file_data$P.Value < 0.01]
   sig_genes = c(sig_genes, all_genes)
 }
@@ -379,10 +480,13 @@ plot_df$sex_status = factor(plot_df$sex_status, levels = c("male_normotensive","
 
 ggplot(plot_df, aes(x = sex_status, y = mean_value, group = cluster, color = sex_status)) +
   geom_jitter(size = 2, width = 0.15) +
+  geom_boxplot(aes(x = sex_status, group = sex_status, fill = sex_status), alpha = 0.6) +
   scale_color_manual(values = c("lightblue", "blue","gold", "orange")) +
+  scale_fill_manual(values = c("lightblue", "blue","gold", "orange")) +
   facet_wrap(~cluster, scales = "free_y") +
   theme_bw() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
+ggsave(paste0(output_directory, "diffexpr_patterns_cluster_", num_clusters, ".pdf"), width = 8, height = 6)
 
 row_annot = data.frame(rownames(expr_avg))
 colnames(row_annot) = c("gene")
@@ -403,7 +507,8 @@ colors_annot = list(
   cluster = cluster_cols
 )
 
-pheatmap(as.matrix(expr_avg), scale = "row", fontsize_col = 6, cluster_cols = FALSE, show_rownames = FALSE, color = colorRampPalette(c("blue", "white", "red"))(100), annotation_col = col_annot, annotation_row = row_annot, annotation_colors = colors_annot)
+outputfile = paste0(output_directory,"heatmap_clusters_pv01_",num_clusters,".pdf")
+pheatmap(as.matrix(expr_avg), scale = "row", fontsize_col = 6, cluster_cols = FALSE, show_rownames = FALSE, color = colorRampPalette(c("blue", "white", "red"))(100), annotation_col = col_annot, annotation_row = row_annot, annotation_colors = colors_annot, filename = outputfile)
 
 # What clusters are PE markers in?
 
@@ -445,6 +550,8 @@ for (cluster_number in 1:num_clusters) {
     bp_readable = setReadable(bp, 'org.Hs.eg.db', 'ENTREZID')
     print(cnetplot(bp_readable) + ggtitle(paste0("Cluster ", cluster_number)))
   }
+  write.csv(data.frame(df), file = paste0(output_directory,"heatmap_clusters_pv01_cluster_",cluster_number,".csv"))
+  
 }
 
 ```
@@ -640,6 +747,93 @@ ggplot(comp, aes(x = NES_male, y = NES_fem)) +
   labs(x = "NES, male, hyp vs norm", y = "NES, female, hyp vs norm")
 ggsave(filename = paste0(output_directory, "compare_",tag,"_male_female_hypnorm.pdf"), height = 6, width = 10)
 
+```
+# Compare GSEA results for sex differences (male:female)
+
+```{r}
+
+# read GSEA results
+fgseaRes_norm_sexdiff_H = read.csv(paste0(output_directory, "t_fgsea_H_results_norm_femalemale.csv"))
+fgseaRes_norm_sexdiff_KEGG = read.csv(paste0(output_directory, "t_fgsea_KEGG_results_norm_femalemale.csv"))
+fgseaRes_norm_sexdiff_GOBP = read.csv(paste0(output_directory, "t_fgsea_GOBP_results_norm_femalemale.csv"))
+fgseaRes_norm_sexdiff = rbind(fgseaRes_norm_sexdiff_H, fgseaRes_norm_sexdiff_KEGG, fgseaRes_norm_sexdiff_GOBP)
+
+fgseaRes_hyp_sexdiff_H = read.csv(paste0(output_directory, "t_fgsea_H_results_hyp_femalemale.csv"))
+fgseaRes_hyp_sexdiff_KEGG = read.csv(paste0(output_directory, "t_fgsea_KEGG_results_hyp_femalemale.csv"))
+fgseaRes_hyp_sexdiff_GOBP = read.csv(paste0(output_directory, "t_fgsea_GOBP_results_hyp_femalemale.csv"))
+fgseaRes_hyp_sexdiff = rbind(fgseaRes_hyp_sexdiff_H, fgseaRes_hyp_sexdiff_KEGG, fgseaRes_hyp_sexdiff_GOBP)
+
+# compare results
+
+comp = merge(
+  fgseaRes_norm_sexdiff[, c("pathway", "NES", "padj")],
+  fgseaRes_hyp_sexdiff[, c("pathway", "NES", "padj")],
+  by = "pathway",
+  suffixes = c("_norm", "_hyp")
+)
+write.csv(comp, file = paste0(output_directory, "compare_fgsea_sexdiff.csv"), row.names = FALSE)
+
+# focus on gene sets significant in males or females
+sig_comp = subset(comp, padj_norm < 0.05 | padj_hyp < 0.05)
+sig_comp_color = ifelse(sig_comp$padj_norm < 0.05 & sig_comp$padj_hyp < 0.05,"red",ifelse(sig_comp$padj_norm < 0.05, "green", ifelse(sig_comp$padj_hyp < 0.05, "purple", "grey70")))
+
+# plot comparison
+ggplot(comp, aes(x = NES_norm, y = NES_hyp)) +
+  geom_point(color = "grey70") +
+  geom_point(data = sig_comp, color = sig_comp_color) +
+  geom_text_repel(
+    data = sig_comp,
+    aes(label = pathway),
+    size = 2,
+    max.overlaps = 30
+  ) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_vline(xintercept = 0, linetype = 2) +
+  theme_bw() +
+  labs(x = "NES, norm, male vs fem", y = "NES, hyp, male vs female")
+ggsave(filename = paste0(output_directory, "compare_fgsea_sexdiff.pdf"), height = 6, width = 10)
+
+sig_comp_filtered = sig_comp[abs(sig_comp$NES_norm) >= 1.9 | abs(sig_comp$NES_hyp) >= 1.9,]
+# sig_comp_filtered$sig_which = ifelse(
+#   sig_comp_filtered$padj_norm < 0.05 & sig_comp_filtered$padj_hyp < 0.05, "sig_both", 
+#   ifelse(
+#   sig_comp_filtered$padj_norm < 0.05, "sig_norm_only", "sig_hyp_only"))
+# sig_comp_filtered$max_NES = ifelse(
+#   sig_comp_filtered$sig_which == "sig_norm_only", sig_comp_filtered$NES_norm, sig_comp_filtered$NES_hyp)
+
+plot_df = sig_comp_filtered %>%
+  arrange(desc(NES_norm)) %>%
+  mutate(pathway = factor(pathway, levels = pathway)) %>%
+  pivot_longer(
+    cols = c(NES_norm, NES_hyp, padj_norm, padj_hyp),
+    names_to = c(".value", "comparison"),
+    names_pattern = "(NES|padj)_(norm|hyp)"
+  ) %>%
+  mutate(
+    comparison = factor(comparison, levels = c("norm", "hyp")),
+    bar_color = case_when(
+      comparison == "norm" & padj < 0.05 ~ "Norm significant",
+      comparison == "hyp" & padj < 0.05 ~ "Hyp significant",
+      TRUE ~ "Not significant or missing"
+    )
+  )
+
+ggplot(plot_df, aes(
+  x = pathway, y = NES,
+  group = comparison, fill = bar_color
+)) +
+  geom_col(position = position_dodge(width = 0.7), width = 0.6) +
+  geom_hline(yintercept = 0, linewidth = 0.3) +
+  scale_fill_manual(values = c(
+    "Norm significant" = "green",
+    "Hyp significant" = "purple",
+    "Not significant or missing" = "grey75"
+  )) +
+  labs(x = NULL, y = "Normalized enrichment score (NES)", fill = NULL) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  coord_flip()
+ggsave(paste0(output_directory, "sexdiff_NES2_compare.pdf"), width = 15, height = 12)
 ```
 
 
@@ -989,6 +1183,93 @@ for (selected_gene in top_res_var_genes) {
   print(plot)
 }
 
+
+
+```
+
+# compare variance split by sex and hypertension status
+
+```{r}
+
+var_data = read.csv("C:/Users/plaisiersb/OneDrive - National Institutes of Health/Documents/Projects/Placenta/HG38/Correct_BatchCovariate/residual_var_pvals.csv", check.names = FALSE)
+
+# scatter of variance in male vs female
+ggplot(var_data, aes(x = median_var_fem, y = median_var_male)) +
+  geom_point() +
+  theme_minimal()
+ggsave(paste0(input_directory, "median_var_scatter_sex.pdf"))
+
+# scatter of variance in norm vs hyp
+ggplot(var_data, aes(x = median_var_norm, y = median_var_hyp)) +
+  geom_point() +
+  theme_minimal()
+ggsave(paste0(input_directory, "median_var_scatter_hypnorm.pdf"))
+
+# plot shows a few genes that are shifted to lower variance
+low_var_norm = var_data[var_data$median_var_norm < -1.5,] 
+#  checked and saw that it was chrY genes which are not expressed 
+#    in female samples in both norm and hyp
+
+# correlation coefficients 
+#    -- removed genes with low var in females
+#       as these are chrY gene which will have 
+#       low var because they are removed from females
+var_data = var_data[var_data$median_var_fem > -3,]
+cor.test(var_data$median_var_fem, var_data$median_var_male)
+cor.test(var_data$median_var_norm, var_data$median_var_hyp)
+
+```
+
+# Genes increasing in variance in hypertensive
+
+```{r}
+
+var_data = read.csv("C:/Users/plaisiersb/OneDrive - National Institutes of Health/Documents/Projects/Placenta/HG38/Correct_BatchCovariate/residual_var_ttest.csv", check.names = FALSE)
+
+var_higher_in_hyp = var_data$gene[var_data$ttest_normhyp_all < 0.05 & var_data$high_hyp == 1]
+
+hyp_all = mapIds(org.Hs.eg.db,
+                  keys = var_higher_in_hyp,
+                  keytype = "SYMBOL",
+                  column = "ENTREZID",
+                  multiVals = "first")
+
+hyp_all = na.omit(unname(hyp_all)) 
+
+hyp_bp = enrichGO(
+  gene          = hyp_all,
+  OrgDb         = org.Hs.eg.db,
+  keyType       = "ENTREZID",
+  ont           = "BP",
+  pAdjustMethod = "BH",
+  pvalueCutoff  = 0.05,
+  qvalueCutoff  = 0.1,
+  readable      = TRUE
+)
+write.csv(hyp_bp@result, file = paste0(output_directory,"residual_var_higher_in_hyp_GObp.csv"), row.names = FALSE)
+
+hyp_bp_readable = setReadable(hyp_bp, 'org.Hs.eg.db', 'ENTREZID')
+cplot = cnetplot(hyp_bp_readable, showCategory = 7)
+ggsave(plot = cplot, paste0(output_directory, "residual_var_higher_in_hyp_cnetplot.pdf"))
+
+# bubble plot similar to others in paper using GSEA results
+plot_df = as.data.frame(hyp_bp@result) %>%
+  filter(p.adjust < 0.01) # 0.05 for H, 0.001 for GO BP
+  
+bubble_plot = ggplot(plot_df,
+       aes(x = FoldEnrichment,
+           y = reorder(Description, FoldEnrichment),
+           # size = FoldEnrichment,
+           # color = -log10(p.adjust))) +
+           size = -log10(p.adjust),
+           color = FoldEnrichment)) +
+  geom_point() + 
+  scale_color_gradient2(low = "royalblue3", mid = "white", high = "firebrick3",midpoint = median(var_data$median_var, na.rm = TRUE)) +
+  ggtitle("Variance higher in hyp - GO BP enrichment") +
+  theme_bw()
+print(bubble_plot)
+ggsave(plot = bubble_plot, filename = paste0(output_directory,"fgsea_H_bubbleplot_residual_var_2.pdf"), height = 6, width = 9)
+
 ```
 
 # Visualize variance and percent rank of published preeclampsia marker genes
@@ -1235,35 +1516,31 @@ ggplot(Smith_data, aes(x = profile, y = n_sig)) +
 
 ```{r PE_marker_hallmarks}
 
-annotation_data = read.csv("C:/Users/plaisiersb/OneDrive - National Institutes of Health/Documents/Projects/Placenta/HG38/Correct_BatchCovariate/placenta_PE_markers_metascape_annotation.csv", check.names = FALSE)
-
 median_res_var_gsea_data = read.csv("C:/Users/plaisiersb/OneDrive - National Institutes of Health/Documents/Projects/Placenta/HG38/Correct_BatchCovariate/median_res_var_H_fgsea.csv", check.names = FALSE)
 median_res_var_gsea_data = median_res_var_gsea_data[order(median_res_var_gsea_data$NES, decreasing = TRUE),]
 sig_gene_sets = median_res_var_gsea_data[median_res_var_gsea_data$padj<0.01,]
 
 placenta_PE_marker_data = read.csv("C:/Users/plaisiersb/OneDrive - National Institutes of Health/Documents/Projects/Placenta/repeat_profile/placenta_PE_markers_all_datasets.csv", check.names = FALSE)
 placenta_PE_marker_data = na.omit(placenta_PE_marker_data)
+placenta_PE_genes = placenta_PE_marker_data$`Gene symbol`
 
 # get all the Hallmark gene sets that were significant in the variance GSEA results
-sig_var_gene_sets = median_res_var_gsea_data$pathway[median_res_var_gsea_data$padj < 0.01]
+sig_var_gene_sets = sig_gene_sets$pathway
 
 # make a data frame with the sig gene sets as columns and PE genes as rows
 sig_df = data.frame(matrix(ncol = length(sig_var_gene_sets), nrow = nrow(placenta_PE_marker_data)))
 colnames(sig_df) = sig_var_gene_sets
 rownames(sig_df) = placenta_PE_marker_data$`Gene symbol`
 
-# fill data frame by asking if the gene is in the Hallmark data set by Metascape
-for (gene in rownames(sig_df)) {
-  pathways = annotation_data$`Hallmark Gene Sets`[annotation_data$`Gene Symbol` == gene]
+# fill data frame by asking if the gene is in the leading edge genes
 
-  pathways = strsplit(pathways, "; ")[[1]]
-  pathways = trimws(pathways)
-  pathways = sub("^\\([^)]*\\)", "", pathways)
-  pathways = gsub(" ","_",pathways)
+leading_edges = lapply(
+  strsplit(as.character(sig_gene_sets$leadingEdge), split = ",", fixed = TRUE),
+  trimws
+)
 
-  for (gene_set in colnames(sig_df)) {
-    sig_df[gene, gene_set] = as.integer(gene_set %in% pathways)
-  }
+for (j in seq_along(leading_edges)) {
+  sig_df[, j] <- as.integer(placenta_PE_genes %in% leading_edges[[j]])
 }
 
 # make a heatmap
@@ -1297,6 +1574,20 @@ ggplot(heatmap_df, aes(x = Gene_Set, y = Gene, fill = factor(Present))) +
     y = "Marker Gene"
   )
 ggsave(paste0(output_directory,"placenta_PE_markers_hallmark_heatmap.pdf"), height = 8, width = 6)
+
+# make bubble plot to annotate the columns
+bubble_plot = ggplot(sig_gene_sets,
+         aes(x = NES,
+             y = reorder(pathway, NES),
+             size = size,
+             #size = -log10(padj),
+             #color = -log10(padj))
+             color = NES)) +
+    geom_point() +
+    scale_color_gradient2(low = "royalblue3", mid = "white", high = "firebrick3") +
+    theme_bw()
+ggsave(plot = bubble_plot, filename = paste0(output_directory,"median_res_var_H_fgsea_bubbleplot.pdf"), height = 8, width = 8)
+
 ```
 
 # Network graph representation of significantly enriched gene sets
@@ -1429,6 +1720,396 @@ ggsave(outputfile, width = 10, height = 10)
 
 ```
 
+# PCA/MDS
+
+```{r}
+
+# load expression data
+lcpm_norm_batchcorrect_data = read.csv("C:/Users/plaisiersb/OneDrive - National Institutes of Health/Documents/Projects/Placenta/HG38/Correct_BatchCovariate/lcpm_norm_batchcorrected.csv")
+
+# create pheno data frame
+
+pheno = data.frame(colnames(lcpm_norm_batchcorrect_data)[-1])
+colnames(pheno) = c("sample")
+pheno$sex = ifelse(grepl("XY",pheno$sample, fixed = TRUE),"male","female")
+pheno$status = ifelse(grepl("Cont",pheno$sample, fixed = TRUE),"normotensive","hypertensive")
+pheno$placenta = str_split(pheno$sample, "_", simplify = TRUE)[, 1]
+pheno$quadrant = str_split(pheno$sample, "_", simplify = TRUE)[, 2]
+pheno$sex_status = paste0(pheno$sex, "_", pheno$status)
+
+# create placenta level pheno file for merging later
+pheno_placenta = pheno
+pheno_placenta$sample = NULL
+pheno_placenta$quadrant = NULL
+pheno_placenta = pheno_placenta[!duplicated(pheno_placenta$placenta), ]
+
+# take mean for all samples from each placenta
+
+# Select expression columns in metadata order
+sample_expr = lcpm_norm_batchcorrect_data [, pheno$sample, drop = FALSE]
+rownames(sample_expr) = lcpm_norm_batchcorrect_data$gene
+
+# Group sample names by tissue
+tissue_samples = split(
+  as.character(pheno$sample),
+  pheno$placenta,
+  drop = TRUE
+)
+
+# Average expression for each gene within each tissue
+tissue_means = vapply(
+  tissue_samples,
+  function(samples) {
+    rowMeans(sample_expr[, samples, drop = FALSE])
+  },
+  numeric(nrow(lcpm_norm_batchcorrect_data))
+)
+
+# PCA plot
+
+# Keep genes with finite values and variation across tissues
+keep = apply(tissue_means, 1, function(x) {
+  all(is.finite(x)) && var(x) > 0
+})
+tissue_means = tissue_means[keep, , drop = FALSE]
+
+# PCA: tissues as observations, genes as features
+pca = prcomp(
+  t(tissue_means),
+  center = TRUE,
+  scale. = FALSE
+)
+
+# Percentage of variance explained by each component
+variance_explained = 100 * pca$sdev^2 / sum(pca$sdev^2)
+
+# Plot tissues
+plot(
+  pca$x[, 1], pca$x[, 2],
+  xlab = sprintf("PC1 (%.1f%%)", variance_explained[1]),
+  ylab = sprintf("PC2 (%.1f%%)", variance_explained[2]),
+  pch = 19,
+  col = seq_len(nrow(pca$x)),
+  main = "PCA of mean placenta expression"
+)
+
+text(
+  pca$x[, 1], pca$x[, 2],
+  labels = rownames(pca$x),
+  pos = 3,
+  cex = 0.9
+)
+
+
+# MDS plot
+
+gene_variance = apply(tissue_means[, , drop = FALSE], 1, var, na.rm = TRUE)
+idx = order(gene_variance, decreasing = TRUE, na.last = TRUE)
+tissue_means = tissue_means[idx, , drop = FALSE]
+
+mat = as.matrix(tissue_means)
+mat_sex = pheno_placenta$sex[match(colnames(mat), pheno_placenta$placenta)]
+mat_status = pheno_placenta$status[match(colnames(mat), pheno_placenta$placenta)]
+mat_sex_status = pheno_placenta$sex_status[match(colnames(mat), pheno_placenta$placenta)]
+
+mat_sex_status_color = mat_sex_status
+mat_sex_status_color[mat_sex_status_color == "male_normotensive"] = "lightblue"
+mat_sex_status_color[mat_sex_status_color == "male_hypertensive"] = "blue"
+mat_sex_status_color[mat_sex_status_color == "female_normotensive"] = "gold"
+mat_sex_status_color[mat_sex_status_color == "female_hypertensive"] = "orange"
+
+mds = limma::plotMDS(
+  mat,
+  labels = colnames(mat),
+  top = min(500, nrow(mat)),
+  gene.selection = "pairwise",
+  #col = ifelse(mat_status == "hypertensive","purple","green"),
+  #col = ifelse(mat_sex == "male","blue","orange"),
+  col = mat_sex_status_color,
+  main = "MDS of mean tissue expression"
+)
+
+```
+
+# Venn diagram of differentially expressed genes by sex and hypertension status
+
+```{r venn_all}
+
+# ------- adj p-value < 0.05 ---------
+fem_hypnorm_adj = female_normhyp_data$genes[female_normhyp_data$adj.P.Val < 0.05]
+male_hypnorm_adj = male_normhyp_data$genes[male_normhyp_data$adj.P.Val < 0.05]
+norm_sexdiff_adj = norm_femalemale_data$genes[norm_femalemale_data$adj.P.Val < 0.05]
+hyp_sexdiff_adj = hyp_femalemale_data$genes[hyp_femalemale_data$adj.P.Val < 0.05]
+
+gene_sets_adj = list ("Female_norm_hyp" = fem_hypnorm_adj,
+                  "Male_norm_hyp" = male_hypnorm_adj,
+                  "Norm_fem_male" = norm_sexdiff_adj, 
+                  "Hyp_fem_male" = hyp_sexdiff_adj)
+gene_sets_adj = lapply(gene_sets_adj, function(x) unique(na.omit(x)))
+
+all_sets_adj = ggVennDiagram(
+  gene_sets_adj,
+  label = "count",
+  label_alpha = 0
+) +
+  scale_fill_gradient(low = "white", high = "steelblue") +
+  labs(title = "Diff expressed genes")
+
+gene_sets_adj = list ("Female" = fem_hypnorm_adj,
+                  "Male" = male_hypnorm_adj)
+gene_sets_adj = lapply(gene_sets_adj, function(x) unique(na.omit(x)))
+
+norm_hyp_adj = ggVennDiagram(
+  gene_sets_adj,
+  label = "count",
+  label_alpha = 0) +
+  scale_fill_gradient(low = "white", high = "steelblue") +
+  labs(title = "Diff expressed genes (norm vs hyp)")
+
+gene_sets_adj = list ("Norm" = norm_sexdiff_adj, 
+                  "Hyp" = hyp_sexdiff_adj)
+
+gene_sets_adj = lapply(gene_sets_adj, function(x) unique(na.omit(x)))
+
+sex_diff_adj = ggVennDiagram(
+  gene_sets_adj,
+  label = "count",
+  label_alpha = 0
+) +
+  scale_fill_gradient(low = "white", high = "steelblue") +
+  labs(title = "Diff expressed genes (sex diff)")
+
+
+# ------- p-value < 0.05 ---------
+fem_hypnorm = female_normhyp_data$genes[female_normhyp_data$P.Value < 0.05]
+male_hypnorm = male_normhyp_data$genes[male_normhyp_data$P.Value < 0.05]
+norm_sexdiff = norm_femalemale_data$genes[norm_femalemale_data$P.Value < 0.05]
+hyp_sexdiff = hyp_femalemale_data$genes[hyp_femalemale_data$P.Value < 0.05]
+
+gene_sets = list ("Female_norm_hyp" = fem_hypnorm,
+                  "Male_norm_hyp" = male_hypnorm,
+                  "Norm_fem_male" = norm_sexdiff, 
+                  "Hyp_fem_male" = hyp_sexdiff)
+gene_sets = lapply(gene_sets, function(x) unique(na.omit(x)))
+
+all_sets = ggVennDiagram(
+  gene_sets,
+  label = "count",
+  label_alpha = 0
+) +
+  scale_fill_gradient(low = "white", high = "steelblue") +
+  labs(title = "Diff expressed genes")
+
+gene_sets = list ("Female" = fem_hypnorm,
+                  "Male" = male_hypnorm)
+gene_sets = lapply(gene_sets, function(x) unique(na.omit(x)))
+
+norm_hyp = ggVennDiagram(
+  gene_sets,
+  label = "count",
+  label_alpha = 0
+) +
+  scale_fill_gradient(low = "white", high = "steelblue") +
+  labs(title = "Diff expressed genes (norm vs hyp)")
+
+gene_sets = list ("Norm" = norm_sexdiff, 
+                  "Hyp" = hyp_sexdiff)
+gene_sets = lapply(gene_sets, function(x) unique(na.omit(x)))
+
+sex_diff = ggVennDiagram(
+  gene_sets,
+  label = "count",
+  label_alpha = 0
+) +
+  scale_fill_gradient(low = "white", high = "steelblue") +
+  labs(title = "Diff expressed genes (sex diff)")
+
+# ------- plot --------
+
+library(patchwork)
+
+panel = ((all_sets_adj | norm_hyp_adj | sex_diff_adj) / (all_sets | norm_hyp | sex_diff)) +
+  plot_annotation(tag_levels = "A")
+
+# Save the entire panel 
+outputfile = paste0(output_directory, "venn_diagrams.pdf")
+ggsave(outputfile, width = 10, height = 10)
+ggsave(
+  filename = outputfile,
+  plot = panel,
+  width = 14,
+  height = 8,
+  units = "in"
+)
+
+#  list interesting genes
+
+print("Overlapping sex diff (adj p < 0.05)")
+print(paste(intersect(norm_sexdiff_adj, hyp_sexdiff_adj)))
+
+print("Sex diff normotensive only (adj p < 0.05)")
+print(paste(setdiff(norm_sexdiff_adj, hyp_sexdiff_adj)))
+
+print("Sex diff hypertensive only (adj p < 0.05)")
+print(paste(setdiff(hyp_sexdiff_adj, norm_sexdiff_adj)))
+
+```
+
+# Venn diagram of differentially expressed genes: sex-stratified vs not
+
+```{r vennVsAll}
+
+# ------- adj p-value < 0.05 ---------
+fem_hypnorm_adj = female_normhyp_data$genes[female_normhyp_data$adj.P.Val < 0.05]
+male_hypnorm_adj = male_normhyp_data$genes[male_normhyp_data$adj.P.Val < 0.05]
+all_hypnorm_adj = all_normhyp_data$genes[all_normhyp_data$adj.P.Val < 0.05]
+
+# none in all
+
+# ------- p-value < 0.05 ---------
+fem_hypnorm = female_normhyp_data$genes[female_normhyp_data$P.Value < 0.05]
+male_hypnorm = male_normhyp_data$genes[male_normhyp_data$P.Value < 0.05]
+all_hypnorm = all_normhyp_data$genes[all_normhyp_data$P.Value < 0.05]
+
+gene_sets = list ("Female" = fem_hypnorm,
+                  "Male" = male_hypnorm,
+                  "All" = all_hypnorm)
+gene_sets = lapply(gene_sets, function(x) unique(na.omit(x)))
+
+norm_hyp = ggVennDiagram(
+  gene_sets,
+  label = "count",
+  label_alpha = 0
+) +
+  scale_fill_gradient(low = "white", high = "steelblue") +
+  labs(title = "Overlap of genes (norm vs hyp) [nominal p-value < 0.05]")
+ggsave(plot = norm_hyp, paste0(output_directory, "venn_diagram_all_normhyp.pdf"))
+
+# find placenta PE genes
+placenta_PE_genes = read.csv("C:/Users/plaisiersb/OneDrive - National Institutes of Health/Documents/Projects/Placenta/HG38/placenta_markers.csv", check.names = FALSE, header = TRUE)
+placenta_PE_genelist = placenta_PE_genes$`Gene symbol`
+
+binary_matrix = vapply(
+  gene_sets,
+  function(gene_set) as.integer(placenta_PE_genelist %in% gene_set),
+  integer(length(placenta_PE_genelist))
+)
+
+rownames(binary_matrix) = placenta_PE_genelist
+binary_df = data.frame(binary_matrix)
+
+
+#  looking at binary_matrix, none are the fem_hypnorm list
+upset(binary_df)
+
+```
+
+# Overlap in consistent GSEA results in males and females
+
+```{r compareGSEA}
+
+library(dplyr)
+
+# Convert a comma-separated string to a set of gene symbols
+parse_genes = function(x) {
+  genes = trimws(unlist(strsplit(x, ",", fixed = TRUE)))
+  unique(genes[!is.na(genes) & nzchar(genes)])
+}
+
+female_data = read.csv("C:/Users/plaisiersb/OneDrive - National Institutes of Health/Documents/Projects/Placenta/HG38/Correct_BatchCovariate/t_fgsea_all3_results_female_normhyp.csv", check.names = FALSE)
+
+male_data = read.csv("C:/Users/plaisiersb/OneDrive - National Institutes of Health/Documents/Projects/Placenta/HG38/Correct_BatchCovariate/t_fgsea_all3_results_male_normhyp.csv", check.names = FALSE)
+
+merge = merge(female_data, male_data, by = "pathway", suffixes = c("_fem","_male"))
+
+# significant in both
+merge_sig = merge[merge$padj_fem < 0.05 & merge$padj_male < 0.05, ]
+
+# same direction of enrichment
+merge_sig = merge_sig[sign(merge_sig$NES_fem) == sign(merge_sig$NES_male), ]
+
+# check for overlapping genes
+merge_sig = merge_sig %>%
+  rowwise() %>%
+  mutate(
+    female_genes = list(parse_genes(leadingEdge_fem)),
+    male_genes   = list(parse_genes(leadingEdge_male)),
+    shared_genes = list(intersect(female_genes, male_genes)),
+
+    overlap = paste(shared_genes, collapse = ","),
+    fraction_female = if (length(female_genes) > 0) {
+      length(shared_genes) / length(female_genes)
+    } else NA_real_,
+    fraction_male = if (length(male_genes) > 0) {
+      length(shared_genes) / length(male_genes)
+    } else NA_real_
+  ) %>%
+  ungroup() %>%
+  select(-female_genes, -male_genes, -shared_genes)
+
+merge_sig = merge_sig %>%
+  mutate(min_overlap_frac = pmin(fraction_female, fraction_male))
+
+# filter
+
+merge_sig = merge_sig[merge_sig$min_overlap_frac > 0.5,]
+write.csv(merge_sig, "C:/Users/plaisiersb/OneDrive - National Institutes of Health/Documents/Projects/Placenta/HG38/Correct_BatchCovariate/t_fgsea_all3_results_compare_male_female_normhyp_filtered_overlapcalc.csv", row.names = FALSE)
+
+```
+
+# Overlap in consistent GSEA results in norm and hyp
+
+```{r compareGSEA2}
+
+# Convert a comma-separated string to a set of gene symbols
+parse_genes = function(x) {
+  genes = trimws(unlist(strsplit(x, ",", fixed = TRUE)))
+  unique(genes[!is.na(genes) & nzchar(genes)])
+}
+
+fgseaRes_norm_sexdiff_H = read.csv(paste0(output_directory, "t_fgsea_H_results_norm_femalemale.csv"))
+fgseaRes_norm_sexdiff_KEGG = read.csv(paste0(output_directory, "t_fgsea_KEGG_results_norm_femalemale.csv"))
+fgseaRes_norm_sexdiff_GOBP = read.csv(paste0(output_directory, "t_fgsea_GOBP_results_norm_femalemale.csv"))
+fgseaRes_norm_sexdiff = rbind(fgseaRes_norm_sexdiff_H, fgseaRes_norm_sexdiff_KEGG, fgseaRes_norm_sexdiff_GOBP)
+
+fgseaRes_hyp_sexdiff_H = read.csv(paste0(output_directory, "t_fgsea_H_results_hyp_femalemale.csv"))
+fgseaRes_hyp_sexdiff_KEGG = read.csv(paste0(output_directory, "t_fgsea_KEGG_results_hyp_femalemale.csv"))
+fgseaRes_hyp_sexdiff_GOBP = read.csv(paste0(output_directory, "t_fgsea_GOBP_results_hyp_femalemale.csv"))
+fgseaRes_hyp_sexdiff = rbind(fgseaRes_hyp_sexdiff_H, fgseaRes_hyp_sexdiff_KEGG, fgseaRes_hyp_sexdiff_GOBP)
+
+merge = merge(fgseaRes_norm_sexdiff, fgseaRes_hyp_sexdiff, by = "pathway", suffixes = c("_norm","_hyp"))
+
+# significant in both
+merge_sig = merge[merge$padj_norm < 0.05 | merge$padj_hyp < 0.05, ]
+
+# check for overlapping genes
+merge_sig = merge_sig %>%
+  rowwise() %>%
+  mutate(
+    norm_genes = list(parse_genes(leadingEdge_norm)),
+    hyp_genes   = list(parse_genes(leadingEdge_hyp)),
+    shared_genes = list(intersect(norm_genes, hyp_genes)),
+
+    overlap = paste(shared_genes, collapse = ","),
+    fraction_norm = if (length(norm_genes) > 0) {
+      length(shared_genes) / length(norm_genes)
+    } else NA_real_,
+    fraction_hyp = if (length(hyp_genes) > 0) {
+      length(shared_genes) / length(hyp_genes)
+    } else NA_real_
+  ) %>%
+  ungroup() %>%
+  dplyr::select(-norm_genes, -hyp_genes, -shared_genes)
+
+merge_sig = merge_sig %>%
+  mutate(min_overlap_frac = pmin(fraction_norm, fraction_hyp))
+
+# filter
+
+merge_sig = merge_sig[merge_sig$min_overlap_frac > 0.5,]
+write.csv(merge_sig, "C:/Users/plaisiersb/OneDrive - National Institutes of Health/Documents/Projects/Placenta/HG38/Correct_BatchCovariate/t_fgsea_all3_results_compare_norm_hyp_femalemale_filtered_overlapcalc.csv", row.names = FALSE)
+
+```
 
 
 # List all the packages used for future reference
